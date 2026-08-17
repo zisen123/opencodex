@@ -35,7 +35,7 @@ import { codexAccountNamespaceEntries, isMainCodexAccountTarget } from "../accou
 
 import { CODEX_CUSTOM_MODEL_CATALOG_KIND, CODEX_PROVIDER_MODEL_CATALOG_KIND, activeCodexModelsCachePath, applyCatalogMetadata, applyMultiAgentMode, applyNativeOpenAiContextOverride, applyRoutedCodexToolMode, catalogBackupPathFor, catalogHasRoutedEntries, catalogModelSlug, ensureStrictCatalogFields, findNativeTemplate, isDefaultCatalogPath, isRoutedModelCompatibilityExcluded, legacyCatalogBackupPath, normalizeRoutedCatalogEntry, normalizeServiceTiers, readCatalog, readCatalogBackup, readCodexCatalogPath, readNativeBaseline } from "./parsing";
 import type { CatalogModel, MultiAgentMode, RawCatalog, RawEntry } from "./parsing";
-import { accountBoundNativeOpenAiSlugs, accountBoundNativeOpenAiSlugsBySelector, applyNativeVisibility, CODEX_NATIVE_ALIAS_CATALOG_KIND, desktopAllowlistSuppressedNativeSlugs, disabledNativeSlugs, isNativeAliasCatalogEntry, isUnsupportedOpenAiNativeSlug, NATIVE_OPENAI_MODELS, observedAccountBoundNativeEntries, shouldIncludeAccountBoundNativeOpenAi, shouldIncludeNativeOpenAi, shouldUpgradeToUpstreamEntry, SUPPORTED_NATIVE_OPENAI_SLUGS, upstreamNativeEntry } from "./metadata";
+import { accountBoundNativeOpenAiSlugs, accountBoundNativeOpenAiSlugsBySelector, applyNativeVisibility, CODEX_CUSTOM_ALIAS_CATALOG_KIND, CODEX_NATIVE_ALIAS_CATALOG_KIND, desktopAllowlistSuppressedNativeSlugs, disabledNativeSlugs, isCustomAliasCatalogEntry, isNativeAliasCatalogEntry, isUnsupportedOpenAiNativeSlug, NATIVE_OPENAI_MODELS, observedAccountBoundNativeEntries, shouldIncludeAccountBoundNativeOpenAi, shouldIncludeNativeOpenAi, shouldUpgradeToUpstreamEntry, SUPPORTED_NATIVE_OPENAI_SLUGS, upstreamNativeEntry } from "./metadata";
 import {
   bundledCatalogCacheState,
   loadBundledCodexCatalog,
@@ -594,6 +594,10 @@ export function buildCatalogEntriesFromObservedState({
     if (m.provider === COMBO_NAMESPACE && m.nativeAlias === true && !slug.includes("/")) {
       e.opencodex_catalog_kind = CODEX_NATIVE_ALIAS_CATALOG_KIND;
     }
+    if (m.customAlias === true && !slug.includes("/")) {
+      // Custom-model public aliases own their bare slug exactly like combo native aliases.
+      e.opencodex_catalog_kind = CODEX_CUSTOM_ALIAS_CATALOG_KIND;
+    }
     // Featured picks may be stored raw (legacy) or encoded — honor both.
     const rankHit = rank.get(slug) ?? rank.get(`${m.provider}/${m.id}`);
     // Natural priority: what the row would get WITHOUT modelPickerOrder. This is the value the
@@ -672,6 +676,7 @@ export function orderForSubagents(goModels: CatalogModel[], featured?: string[])
  */
 function isOcxAuthoredRoutedEntry(entry: RawEntry): boolean {
   if (isNativeAliasCatalogEntry(entry)) return true;
+  if (isCustomAliasCatalogEntry(entry)) return true;
   const desc = typeof entry.description === "string" ? entry.description : "";
   const slug = typeof entry.slug === "string" ? entry.slug : "";
   return slug.includes("/") && desc.startsWith("Routed via opencodex → ");
@@ -681,6 +686,7 @@ function recoverableNativeSlug(entry: RawEntry): string | null {
   const slug = typeof entry.slug === "string" ? entry.slug : "";
   return SUPPORTED_NATIVE_OPENAI_SLUGS.has(slug)
     && !isNativeAliasCatalogEntry(entry)
+    && !isCustomAliasCatalogEntry(entry)
     && entry.owned_by !== COMBO_NAMESPACE
     ? slug
     : null;
@@ -972,7 +978,7 @@ export function mergeCatalogEntriesFromObservedState({
   );
   const existingRoutedEntries = catalogModelsForMerge.filter(m =>
     typeof m.slug === "string"
-    && (m.slug.includes("/") || isNativeAliasCatalogEntry(m))
+    && (m.slug.includes("/") || isNativeAliasCatalogEntry(m) || isCustomAliasCatalogEntry(m))
     && trustedAccountBoundNativeCatalogSlug(m) === undefined
   );
   const preservedRoutedEntries = existingRoutedEntries.filter(entry => {

@@ -5,13 +5,14 @@ import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline/promises";
 import { syncModelsToCodex } from "../codex/sync";
 import { hasOwnProvider, isValidProviderName, loadConfig, saveConfig } from "../config";
+import { customModelPublicAliasIssues } from "../codex/custom-model-public-alias";
 import { canonicalizeReasoningEfforts, isDeclaredReasoningEffort } from "../reasoning-effort";
 import { encodedModelIdCollides, routedSlug, slugEquals } from "../providers/slug-codec";
 import { knownModelIdsForProvider } from "../router";
 import { findLiveProxy } from "../server/proxy-liveness";
 import type { OcxConfig, OcxCustomModel } from "../types";
 
-const ADD_USAGE = "Usage: ocx models add <provider> <modelId> [--display-name <name>] [--context-window <tokens>] [--modalities text,image,audio] [--reasoning-efforts <none,minimal,low,medium,high,xhigh,max,ultra>] [--default-reasoning-effort <level>]";
+const ADD_USAGE = "Usage: ocx models add <provider> <modelId> [--display-name <name>] [--public-alias <bare-id>] [--context-window <tokens>] [--modalities text,image,audio] [--reasoning-efforts <none,minimal,low,medium,high,xhigh,max,ultra>] [--default-reasoning-effort <level>]";
 const REMOVE_USAGE = "Usage: ocx models remove <customId|provider/modelId> [--yes]";
 const LIST_CUSTOM_USAGE = "Usage: ocx models list-custom [--json]";
 const ALLOWED_MODALITIES = new Set(["text", "image", "audio"]);
@@ -173,6 +174,7 @@ async function handleCustomAdd(args: string[]): Promise<void> {
   const provider = rest.shift()?.trim() ?? "";
   const modelId = rest.shift()?.trim() ?? "";
   const displayNameValue = consumeFlagValue(rest, "--display-name");
+  const publicAliasValue = consumeFlagValue(rest, "--public-alias");
   const contextWindowValue = consumeFlagValue(rest, "--context-window");
   const modalitiesValue = consumeFlagValue(rest, "--modalities");
   const reasoningEffortsValue = consumeFlagValue(rest, "--reasoning-efforts");
@@ -189,6 +191,13 @@ async function handleCustomAdd(args: string[]): Promise<void> {
 
   const displayName = displayNameValue?.trim() || undefined;
   if (displayName?.includes("/")) fail("displayName must not contain /");
+
+  const publicAlias = publicAliasValue?.trim() || undefined;
+  if (publicAlias) {
+    for (const issue of customModelPublicAliasIssues(config, publicAlias)) {
+      fail(issue.message);
+    }
+  }
 
   let contextWindow: number | undefined;
   if (contextWindowValue !== undefined) {
@@ -226,6 +235,7 @@ async function handleCustomAdd(args: string[]): Promise<void> {
     provider,
     modelId,
     ...(displayName ? { displayName } : {}),
+    ...(publicAlias ? { publicAlias } : {}),
     ...(contextWindow ? { contextWindow } : {}),
     ...(inputModalities ? { inputModalities } : {}),
     ...(parsed.reasoningEfforts ? { reasoningEfforts: parsed.reasoningEfforts } : {}),

@@ -36,7 +36,7 @@ import upstreamModelsSnapshot from "../data/upstream-models.json";
 import type { RawEntry } from "./parsing";
 import { readCurrentCatalogOrCache, readCurrentCodexCatalog, readCurrentCodexModelsCache, unique } from "./bundled";
 import { trustedAccountBoundNativeCatalogSlug, visibleCodexAccountSelectors } from "./account-models";
-import { CODEX_NATIVE_ALIAS_CATALOG_KIND } from "./kinds";
+import { CODEX_NATIVE_ALIAS_CATALOG_KIND, CODEX_CUSTOM_ALIAS_CATALOG_KIND } from "./kinds";
 import {
   NATIVE_DAYBREAK_BLUE_MODEL,
   NATIVE_OPENAI_CAPABILITY_ALIAS_MODELS,
@@ -46,6 +46,7 @@ import {
   nativeOpenAiCapabilitySourceSlug,
 } from "./native-models";
 export { CODEX_NATIVE_ALIAS_CATALOG_KIND } from "./kinds";
+export { CODEX_CUSTOM_ALIAS_CATALOG_KIND } from "./kinds";
 export {
   NATIVE_DAYBREAK_BLUE_MODEL,
   NATIVE_OPENAI_CAPABILITY_ALIAS_MODELS,
@@ -61,13 +62,19 @@ export const DOCUMENTED_NATIVE_OPENAI_ADDITIONS = [
 ];
 
 export function configuredNativeAliasSlugs(
-  config: Pick<OcxConfig, "combos">,
+  config: Pick<OcxConfig, "combos" | "customModels">,
 ): Set<string> {
   const aliases = new Set<string>();
   for (const raw of Object.values(config.combos ?? {})) {
     if (!isNativeAliasCombo(raw)) continue;
     const alias = raw.alias!.trim();
     if (SUPPORTED_NATIVE_OPENAI_SLUGS.has(alias)) aliases.add(alias);
+  }
+  // Custom-model public aliases (OcxCustomModel.publicAlias) take over their bare slug the
+  // same way combo native aliases do. Only aliases naming a supported native slug shadow one.
+  for (const custom of config.customModels ?? []) {
+    const alias = typeof custom.publicAlias === "string" ? custom.publicAlias.trim() : "";
+    if (alias && SUPPORTED_NATIVE_OPENAI_SLUGS.has(alias)) aliases.add(alias);
   }
   return aliases;
 }
@@ -78,7 +85,7 @@ export function configuredNativeAliasSlugs(
  * omitting disabled native rows is therefore part of the explicit native-alias opt-in.
  */
 export function desktopAllowlistSuppressedNativeSlugs(
-  config: Pick<OcxConfig, "combos" | "disabledModels">,
+  config: Pick<OcxConfig, "combos" | "disabledModels" | "customModels">,
 ): Set<string> {
   const suppressed = configuredNativeAliasSlugs(config);
   if (suppressed.size === 0) return suppressed;
@@ -91,6 +98,11 @@ export function desktopAllowlistSuppressedNativeSlugs(
 
 export function isNativeAliasCatalogEntry(entry: RawEntry): boolean {
   return entry.opencodex_catalog_kind === CODEX_NATIVE_ALIAS_CATALOG_KIND;
+}
+
+/** A routed custom-model row (`OcxCustomModel.publicAlias`) that owns a bare catalog slug. */
+export function isCustomAliasCatalogEntry(entry: RawEntry): boolean {
+  return entry.opencodex_catalog_kind === CODEX_CUSTOM_ALIAS_CATALOG_KIND;
 }
 
 export function isUnsupportedOpenAiNativeSlug(slug: string): boolean {
@@ -191,7 +203,7 @@ export function disabledNativeSlugs(config: Pick<OcxConfig, "disabledModels">): 
   return new Set((config.disabledModels ?? []).filter(id => !id.includes("/")));
 }
 
-export function visibleNativeSlugs(config: Pick<OcxConfig, "disabledModels" | "combos">): string[] {
+export function visibleNativeSlugs(config: Pick<OcxConfig, "disabledModels" | "combos" | "customModels">): string[] {
   const disabled = disabledNativeSlugs(config);
   const shadowed = configuredNativeAliasSlugs(config);
   return nativeOpenAiSlugs().filter(slug => !disabled.has(slug) && !shadowed.has(slug));
@@ -232,7 +244,7 @@ function mainAccountSelectors(config: AccountSelectorConfig): string[] {
 
 /** Native slugs exposed to Claude Desktop show/export/apply (opt-out via claudeCode.desktopNativeModels). */
 export function desktopVisibleNativeSlugs(
-  config: Pick<OcxConfig, "claudeCode" | "disabledModels" | "combos" | "providers"
+  config: Pick<OcxConfig, "claudeCode" | "disabledModels" | "combos" | "customModels" | "providers"
     | "codexAccounts" | "codexAccountNamespaces" | "codexAccountPickerEnabled">,
 ): string[] {
   if (config.claudeCode?.desktopNativeModels === false) return [];
@@ -250,7 +262,7 @@ export function desktopVisibleNativeSlugs(
   ]);
 }
 
-export function nativeModelRows(config: Pick<OcxConfig, "disabledModels" | "combos" | "providerContextCaps">): Array<{ slug: string; disabled: boolean; contextWindow?: number }> {
+export function nativeModelRows(config: Pick<OcxConfig, "disabledModels" | "combos" | "customModels" | "providerContextCaps">): Array<{ slug: string; disabled: boolean; contextWindow?: number }> {
   const disabled = disabledNativeSlugs(config);
   const shadowed = configuredNativeAliasSlugs(config);
   const openaiContextCap = providerContextCap(config, OPENAI_CODEX_PROVIDER_ID);
@@ -268,6 +280,9 @@ export function applyNativeVisibility(
 ): RawEntry[] {
   for (const entry of entries) {
     if (isNativeAliasCatalogEntry(entry)) continue;
+    // Custom-model public aliases are routed rows that merely occupy a bare slug; native
+    // disable/hide state belongs to the real native surface, not to them.
+    if (isCustomAliasCatalogEntry(entry)) continue;
     const slug = typeof entry.slug === "string" ? entry.slug : "";
     const accountBoundSlug = trustedAccountBoundNativeCatalogSlug(entry);
     const nativeSlug = accountBoundSlug ?? slug;

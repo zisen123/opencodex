@@ -69,6 +69,7 @@ import {
   type ResolvedProviderModelDiscovery,
 } from "../../providers/model-discovery";
 import upstreamModelsSnapshot from "../data/upstream-models.json";
+import { customModelPublicAlias } from "../custom-model-public-alias";
 import { createAdmissionGate, ResourceAdmissionError, type AdmissionMetrics } from "../../lib/admission";
 
 
@@ -1803,6 +1804,12 @@ async function gatherRoutedModelsUncached(
       ...(cm.displayName
         ? { displayName: cm.displayName }
         : codexForwardNativeCapabilityAlias ? { displayName: "Daybreak Blue" } : {}),
+      // Explicit bare public alias (OcxCustomModel.publicAlias): the catalog shows this bare
+      // slug and routing resolves it to this provider/modelId before native OpenAI. Marked
+      // customAlias so the bare-slug takeover path treats it like a combo native alias.
+      ...(customModelPublicAlias(cm)
+        ? { alias: customModelPublicAlias(cm)!, customAlias: true }
+        : {}),
       ...(customContextWindow !== undefined ? { contextWindow: customContextWindow } : {}),
       ...(cm.inputModalities
         ? { inputModalities: cm.inputModalities }

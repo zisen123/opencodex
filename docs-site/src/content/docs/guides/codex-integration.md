@@ -264,6 +264,32 @@ reapplies the configured name. Genuine upstream native names (e.g. `gpt-5.6-sol`
 "GPT-5.6-Sol") come from the pinned upstream snapshot and are never overridden by a custom display
 name.
 
+### Custom model public alias (bare picker id)
+
+A custom model can also take over a **bare catalog id** so Codex's model picker shows that bare
+name instead of the routed `<provider>/<model>` slug. This is the `publicAlias` field on a custom
+model, and it shares the same bare-slug takeover contract as a combo `nativeAlias`.
+
+The alias is display-facing but routing-real: the catalog lists the bare id as the row's slug, and
+opencodex resolves that bare id to the concrete provider/modelId **before** any native OpenAI
+interpretation — so a `gpt-*`-shaped alias never falls through to the canonical OpenAI provider.
+The upstream wire id stays the row's native `modelId`; only the Codex-facing selector changes. The
+routed `<provider>/<modelId>` slug keeps working alongside the alias.
+
+```bash
+ocx models add sophnet gpt-5.5-internal --public-alias gpt-5.5
+```
+
+With this, Codex shows `gpt-5.5` in its picker, but the request is routed to
+`sophnet/gpt-5.5-internal` upstream. A bare alias that matches a supported native slug (e.g.
+`gpt-5.5`) suppresses that native row in the catalog; a non-native bare alias just adds a new row.
+
+The same field is accepted by the management API (`POST /api/custom-models`,
+`PUT /api/custom-models/<id>` with a `publicAlias` string; send an empty string to clear it). A
+`/` is rejected, and the alias must not collide with a provider name, a combo alias, or another
+custom model's alias. When the owning provider is disabled, routing the alias fails closed instead
+of silently falling through.
+
 ### External provider managers
 
 If `config.toml` already selects a provider other than `openai` or `opencodex`, OpenCodex leaves the

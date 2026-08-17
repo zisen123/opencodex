@@ -27,6 +27,7 @@ import {
 import { decodeRoutedModelIdOrThrow, encodeRoutedModelId } from "./providers/slug-codec";
 import { getStaleCached } from "./codex/model-cache";
 import { codexAccountNamespaceEntries } from "./codex/account-namespaces";
+import { customModelPublicAlias } from "./codex/custom-model-public-alias";
 import {
   buildRouteDecisionTrace,
   type RouteDecisionKind,
@@ -469,6 +470,30 @@ function isBareOpenAiFamilyModel(modelId: string): boolean {
     && (/^(?:gpt-|o1-|o3-|o4-)/.test(modelId) || CODEX_INTERNAL_OPENAI_MODELS.has(modelId));
 }
 
+/**
+ * Resolve a bare `OcxCustomModel.publicAlias` to its concrete provider/modelId. The alias is
+ * an explicit bare-slug takeover (same contract as a combo `nativeAlias`): it wins before any
+ * native OpenAI interpretation so a `gpt-*`-family alias can never fall through to the
+ * canonical OpenAI provider. A disabled owning provider fails closed instead of falling
+ * through, mirroring the explicit `<provider>/<model>` namespace branch.
+ */
+function resolveCustomModelPublicAlias(
+  config: OcxConfig,
+  modelId: string,
+): RouteResult | undefined {
+  if (modelId.includes("/")) return undefined;
+  for (const custom of config.customModels ?? []) {
+    const alias = customModelPublicAlias(custom);
+    if (alias === null || alias !== modelId) continue;
+    const provider = config.providers[custom.provider];
+    if (!provider || provider.disabled === true) {
+      throw new Error(`Provider is disabled: ${custom.provider}`);
+    }
+    return routeResult(custom.provider, provider, custom.modelId, "explicit-provider", "custom-model-public-alias");
+  }
+  return undefined;
+}
+
 function routeResult(
   providerName: string,
   provider: OcxProviderConfig,
@@ -636,6 +661,9 @@ function routeModelInternal(
       );
     }
   }
+
+  const customAliasRoute = resolveCustomModelPublicAlias(config, modelId);
+  if (customAliasRoute) return customAliasRoute;
 
   if (isBareOpenAiFamilyModel(modelId)) {
     const provider = config.providers[OPENAI_CODEX_PROVIDER_ID];

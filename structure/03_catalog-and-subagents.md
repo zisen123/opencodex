@@ -54,6 +54,11 @@ native alias also omits disabled bare native rows from the effective catalog. Da
 derived from the static native set, and sync retains bundled/pristine native recovery sources so a
 later re-enable or alias removal restores native metadata.
 
+Custom models share the same takeover through `OcxCustomModel.publicAlias` (catalog kind
+`custom-native-alias-v1`): an explicitly configured bare alias replaces the bare native row with
+that slug, routes the bare id to the model's concrete provider/modelId before canonical OpenAI,
+and otherwise follows the nativeAlias contract above.
+
 Provider live-model lists are cached with a configured TTL (`src/codex/model-cache.ts`). Adding,
 deleting, or editing a provider's shape clears that per-provider cache; a disabled-only change
 deliberately does not, because a disabled provider is already excluded from the catalog gather

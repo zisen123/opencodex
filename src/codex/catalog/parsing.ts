@@ -33,7 +33,7 @@ import upstreamModelsSnapshot from "../data/upstream-models.json";
 
 import { NATIVE_OPENAI_CONTEXT_OVERRIDES, SUPPORTED_NATIVE_OPENAI_SLUGS, UPSTREAM_NATIVE_ENTRIES, isNativeOpenAiCapabilityAliasModel, nativeMultiAgentVersion } from "./metadata";
 import { trustedAccountBoundNativeCatalogSlug } from "./account-models";
-import { CODEX_NATIVE_ALIAS_CATALOG_KIND } from "./kinds";
+import { CODEX_NATIVE_ALIAS_CATALOG_KIND, CODEX_CUSTOM_ALIAS_CATALOG_KIND } from "./kinds";
 
 export function legacyCatalogBackupPath(): string {
   return join(getConfigDir(), "catalog-backup.json");
@@ -98,6 +98,14 @@ export interface CatalogModel {
   alias?: string;
   /** Explicit combo takeover of a bare OpenAI-native catalog id. */
   nativeAlias?: boolean;
+  /**
+   * Explicit custom-model takeover of a bare catalog id via `OcxCustomModel.publicAlias`.
+   * The row owns its bare alias slug the way a combo native alias owns one: the bare native
+   * row with the same slug is suppressed, and routing resolves the bare id to this
+   * provider/modelId before any native OpenAI interpretation. The upstream wire id stays the
+   * row's native `modelId`.
+   */
+  customAlias?: boolean;
   /**
    * Display-only Codex catalog `display_name` override. Relabels the picker row ONLY — it never
    * affects the routing slug, alias-collision order, native marketing-name precedence, or provider
@@ -214,6 +222,7 @@ export function findNativeTemplate(catalog: RawCatalog | null): RawEntry | null 
       && !m.slug.includes("/")
       && "base_instructions" in m
       && m.opencodex_catalog_kind !== CODEX_NATIVE_ALIAS_CATALOG_KIND
+      && m.opencodex_catalog_kind !== CODEX_CUSTOM_ALIAS_CATALOG_KIND
       && m.owned_by !== COMBO_NAMESPACE
       && !(typeof m.description === "string" && m.description.startsWith("Routed via opencodex → ")),
   ) ?? null;
@@ -263,7 +272,17 @@ export function ensureAutoCompactTokenLimit(entry: RawEntry): RawEntry {
 }
 
 export function isNativeOpenAiEntry(entry: RawEntry): boolean {
-  return typeof entry.slug === "string" && !entry.slug.includes("/");
+  return typeof entry.slug === "string"
+    && !entry.slug.includes("/")
+    // A custom-model public alias (OcxCustomModel.publicAlias) occupies a bare slug but is a
+    // routed row: it must not receive native OpenAI context overrides or native recovery.
+    && entry.opencodex_catalog_kind !== CODEX_CUSTOM_ALIAS_CATALOG_KIND;
+}
+
+/** True for entries that own a bare catalog slug through an explicit routed alias. */
+export function isBareAliasCatalogEntry(entry: RawEntry): boolean {
+  return entry.opencodex_catalog_kind === CODEX_NATIVE_ALIAS_CATALOG_KIND
+    || entry.opencodex_catalog_kind === CODEX_CUSTOM_ALIAS_CATALOG_KIND;
 }
 
 export function applyNativeOpenAiContextOverride(entry: RawEntry, contextCap?: number): void {
@@ -359,6 +378,11 @@ export function catalogEntryIsNativeChatGpt(entry: RawEntry): boolean {
   if (entry.opencodex_catalog_kind === CODEX_NATIVE_ALIAS_CATALOG_KIND) {
     return entry.use_responses_lite === true;
   }
+  // custom-model public aliases (custom-native-alias-v1) are routed rows, never
+  // ChatGPT-native, even when the bare alias shadows a native slug.
+  if (entry.opencodex_catalog_kind === CODEX_CUSTOM_ALIAS_CATALOG_KIND) {
+    return false;
+  }
   if (trustedAccountBoundNativeCatalogSlug(entry)) return true;
   const routedNativeSlug = slug.startsWith(`${OPENAI_CODEX_PROVIDER_ID}/`)
     ? slug.slice(OPENAI_CODEX_PROVIDER_ID.length + 1)
@@ -411,7 +435,8 @@ export function applyMultiAgentMode(
     // re-apply upstream pins from the snapshot for native entries that have one.
     for (const entry of entries) {
       const slug = typeof entry.slug === "string" ? entry.slug : "";
-      const nativeAlias = entry.opencodex_catalog_kind === CODEX_NATIVE_ALIAS_CATALOG_KIND;
+      const nativeAlias = entry.opencodex_catalog_kind === CODEX_NATIVE_ALIAS_CATALOG_KIND
+        || entry.opencodex_catalog_kind === CODEX_CUSTOM_ALIAS_CATALOG_KIND;
       const routedNativeSlug = slug.startsWith(`${OPENAI_CODEX_PROVIDER_ID}/`)
         ? slug.slice(OPENAI_CODEX_PROVIDER_ID.length + 1)
         : "";
@@ -549,7 +574,8 @@ export function readCatalogBackup(catalogPath: string): RawCatalog | null {
 
 export function catalogHasRoutedEntries(catalog: RawCatalog | null): boolean {
   return (catalog?.models ?? []).some(m => typeof m.slug === "string"
-    && (m.slug.includes("/") || m.opencodex_catalog_kind === CODEX_NATIVE_ALIAS_CATALOG_KIND));
+    && (m.slug.includes("/")
+      || isBareAliasCatalogEntry(m)));
 }
 
 export function writePristineCatalogBackup(backupPath: string, catalogPath: string, catalog: RawCatalog): void {

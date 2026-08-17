@@ -99,6 +99,7 @@ import { deriveProviderPresets } from "../../providers/derive";
 import { providerCodexAccountMode } from "../../providers/registry";
 import { encodedModelIdCollides, routedSlug, slugEquals } from "../../providers/slug-codec";
 import { knownModelIdsForProvider } from "../../router";
+import { customModelPublicAliasIssues } from "../../codex/custom-model-public-alias";
 import { COMBO_NAMESPACE, comboDisabledModelSelectors, comboModelId, preservesPhysicalComboProvider } from "../../combos";
 import { clearProviderQuotaCache, fetchProviderQuotaReports } from "../../providers/quota";
 import { isCanonicalOpenAiForwardProvider } from "../../providers/openai-tiers";
@@ -372,7 +373,7 @@ export async function handleModelRoutes(ctx: ManagementContext): Promise<Respons
   }
 
   if (url.pathname === "/api/custom-models" && req.method === "POST") {
-    let body: { provider?: unknown; modelId?: unknown; displayName?: unknown; contextWindow?: unknown; inputModalities?: unknown; reasoningEfforts?: unknown; defaultReasoningEffort?: unknown };
+    let body: { provider?: unknown; modelId?: unknown; displayName?: unknown; publicAlias?: unknown; contextWindow?: unknown; inputModalities?: unknown; reasoningEfforts?: unknown; defaultReasoningEffort?: unknown };
     try { body = await readManagementJsonBody(req); } catch (error) { rethrowManagementBodyTooLarge(error); return jsonResponse({ error: "invalid JSON body" }, 400); }
     const provider = typeof body.provider === "string" ? body.provider.trim() : "";
     const modelId = typeof body.modelId === "string" ? body.modelId.trim() : "";
@@ -381,6 +382,11 @@ export async function handleModelRoutes(ctx: ManagementContext): Promise<Respons
     if (!hasOwnProvider(config.providers, provider)) return jsonResponse({ error: "provider not configured" }, 404);
     const displayName = typeof body.displayName === "string" && body.displayName.trim() ? body.displayName.trim() : undefined;
     if (displayName?.includes("/")) return jsonResponse({ error: "displayName must not contain /" }, 400);
+    const publicAlias = typeof body.publicAlias === "string" && body.publicAlias.trim() ? body.publicAlias.trim() : undefined;
+    if (publicAlias) {
+      const aliasIssues = customModelPublicAliasIssues(config, publicAlias);
+      if (aliasIssues.length > 0) return jsonResponse({ error: aliasIssues[0].message }, 409);
+    }
     const contextWindow = typeof body.contextWindow === "number" && body.contextWindow > 0 ? Math.floor(body.contextWindow) : undefined;
     const modalities = readInputModalities(body.inputModalities);
     if (modalities.error) return jsonResponse({ error: modalities.error }, 400);
@@ -403,6 +409,7 @@ export async function handleModelRoutes(ctx: ManagementContext): Promise<Respons
       provider,
       modelId,
       ...(displayName ? { displayName } : {}),
+      ...(publicAlias ? { publicAlias } : {}),
       ...(contextWindow ? { contextWindow } : {}),
       ...(inputModalities && inputModalities.length > 0 ? { inputModalities } : {}),
       ...(reasoning.values !== undefined ? { reasoningEfforts: reasoning.values } : {}),
@@ -419,7 +426,7 @@ export async function handleModelRoutes(ctx: ManagementContext): Promise<Respons
   if (customPutMatch && req.method === "PUT") {
     let id: string;
     try { id = decodeURIComponent(customPutMatch[1]); } catch { return jsonResponse({ error: "invalid id encoding" }, 400); }
-    let body: { displayName?: unknown; contextWindow?: unknown; inputModalities?: unknown; modelId?: unknown; reasoningEfforts?: unknown; defaultReasoningEffort?: unknown };
+    let body: { displayName?: unknown; publicAlias?: unknown; contextWindow?: unknown; inputModalities?: unknown; modelId?: unknown; reasoningEfforts?: unknown; defaultReasoningEffort?: unknown };
     try { body = await readManagementJsonBody(req); } catch (error) { rethrowManagementBodyTooLarge(error); return jsonResponse({ error: "invalid JSON body" }, 400); }
     const list = config.customModels ?? [];
     const idx = list.findIndex(cm => cm.id === id);
@@ -432,6 +439,16 @@ export async function handleModelRoutes(ctx: ManagementContext): Promise<Respons
       const dn = typeof body.displayName === "string" ? body.displayName.trim() : "";
       if (dn.includes("/")) return jsonResponse({ error: "displayName must not contain /" }, 400);
       cm.displayName = dn || undefined;
+    }
+    if (body.publicAlias !== undefined) {
+      const alias = typeof body.publicAlias === "string" ? body.publicAlias.trim() : "";
+      if (alias) {
+        const aliasIssues = customModelPublicAliasIssues(config, alias, { excludeId: id });
+        if (aliasIssues.length > 0) return jsonResponse({ error: aliasIssues[0].message }, 409);
+        cm.publicAlias = alias;
+      } else {
+        cm.publicAlias = undefined;
+      }
     }
     if (body.contextWindow !== undefined) {
       cm.contextWindow = typeof body.contextWindow === "number" && body.contextWindow > 0 ? Math.floor(body.contextWindow) : undefined;

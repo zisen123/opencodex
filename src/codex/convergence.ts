@@ -47,8 +47,9 @@ import {
   } from "./catalog/sync";
   import { multiAgentV2EnabledFromConfigText } from "./features";
   import { exactComboCatalogSlugs } from "./catalog/aggregation";
-  import {
+import {
   isNativeAliasCatalogEntry,
+  isCustomAliasCatalogEntry,
   accountBoundNativeOpenAiSlugs,
   accountBoundNativeOpenAiSlugsBySelector,
   disabledNativeSlugs,
@@ -159,7 +160,9 @@ interface ReadonlyRawCatalogLike {
 
 function hasRoutedEntries(catalog: ReadonlyRawCatalogLike): boolean {
   return (catalog.models ?? []).some(entry => typeof entry.slug === "string"
-    && (entry.slug.includes("/") || isNativeAliasCatalogEntry(entry as RawEntry)));
+    && (entry.slug.includes("/")
+      || isNativeAliasCatalogEntry(entry as RawEntry)
+      || isCustomAliasCatalogEntry(entry as RawEntry)));
 }
 
 function processEvidence(source: CatalogSourceForGather): CatalogProcessLocalEvidence {

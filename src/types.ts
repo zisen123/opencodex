@@ -611,6 +611,14 @@ export interface OcxCustomModel {
   reasoningEfforts?: string[];
   /** Default effort label when `reasoningEfforts` is non-empty. */
   defaultReasoningEffort?: string;
+  /**
+   * Public bare model id this custom row answers to in addition to its routed
+   * `<provider>/<modelId>` slug. The alias becomes the Codex-facing catalog slug (the
+   * picker shows the bare id), and the router resolves it to the concrete
+   * provider/modelId before any native OpenAI interpretation. The upstream wire id
+   * stays the row's native `modelId`. Never inferred; must be configured explicitly.
+   */
+  publicAlias?: string;
   /** 추가 시각 (ISO 8601) */
   addedAt?: string;
 }
