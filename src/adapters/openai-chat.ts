@@ -1216,7 +1216,11 @@ export function createOpenAIChatAdapter(provider: OcxProviderConfig): ProviderAd
           ? (toolChoice === "none" ? "none" : "auto")
           : toolChoice;
       }
-      if (maxTokens !== undefined) body.max_tokens = maxTokens;
+      // 2026-08-17 patch (bak: openai-chat.ts.bak-20260817): sophnet rejects 'max_tokens'
+      // when the request carries image_url content ("Use 'max_completion_tokens' instead"),
+      // while plain-text requests accept both. All sophnet chat models tested accept
+      // max_completion_tokens, so send it unconditionally. Re-apply after `npm update`.
+      if (maxTokens !== undefined) body.max_completion_tokens = maxTokens;
       if (parsed.options.temperature !== undefined && !modelInList(provider.noTemperatureModels, parsed.modelId)) {
         body.temperature = parsed.options.temperature;
       }
