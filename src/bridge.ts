@@ -29,6 +29,15 @@ function uuid(): string {
 /** Test-only: bound the abandoned-owned-budget watchdog delay (null restores). */
 let ownedBudgetAbandonedMs = 10 * 60 * 1000;
 const OWNED_BUDGET_ABANDONED_DEFAULT_MS = ownedBudgetAbandonedMs;
+
+/**
+ * Codex TUI renders a reasoning block in the main chat view only when the text
+ * starts with a `**bold header**`; otherwise the cell is transcript-only (Ctrl+T).
+ * sophnet/openai-chat upstream emits bare reasoning_content, so prepend a bold
+ * header to make it visible. The clean text is preserved in the ocxr1 envelope
+ * (parser prefers envelope.txt) so upstream replay is not polluted.
+ */
+const CODEX_REASONING_HEADER = "**思考**\n\n";
 export function setOwnedBudgetAbandonedMsForTests(ms: number | null): void {
   ownedBudgetAbandonedMs = ms ?? OWNED_BUDGET_ABANDONED_DEFAULT_MS;
 }
@@ -399,7 +408,7 @@ export function bridgeToResponsesSSE(
 
       let currentMsg: { itemId: string; outputIndex: number; text: string; textBytes: number; phase?: OcxMessagePhase } | null = null;
       let currentReasoning: { itemId: string; outputIndex: number; text: string; textBytes: number } | null = null;
-      let currentRawReasoning: { itemId: string; outputIndex: number; text: string; textBytes: number } | null = null;
+      let currentRawReasoning: { itemId: string; outputIndex: number; text: string; textBytes: number; rawText: string; rawBytes: number } | null = null;
       // Anthropic extended-thinking round-trip state: the signature signs the CURRENT thinking
       // block; redacted blocks are opaque payloads replayed verbatim. Attached to the reasoning
       // item as an ocxr1 encrypted_content envelope on close. hiddenThinkingText collects the
@@ -571,13 +580,16 @@ export function bridgeToResponsesSSE(
 
       const closeCurrentRawReasoning = () => {
         if (!currentRawReasoning) return;
-        rawReasoningForNextToolCall = currentRawReasoning.text;
+        // Replay to upstream must use the clean text without the display header.
+        rawReasoningForNextToolCall = currentRawReasoning.rawText;
+        const envelope = encodeReasoningEnvelope({ txt: currentRawReasoning.rawText });
         const item = {
           type: "reasoning", id: currentRawReasoning.itemId, summary: [],
           content: [{ type: "reasoning_text", text: currentRawReasoning.text }],
+          encrypted_content: envelope,
         };
         emit("response.output_item.done", { output_index: currentRawReasoning.outputIndex, item });
-        retainFinishedItem(item as OutputItem, currentRawReasoning.textBytes, "reasoning");
+        retainFinishedItem(item as OutputItem, currentRawReasoning.textBytes + bytesOf(envelope), "reasoning");
         outputIndex++;
         currentRawReasoning = null;
       };
@@ -970,17 +982,26 @@ export function bridgeToResponsesSSE(
                 const itemId = `rs_${uuid()}`;
                 const item = { type: "reasoning", id: itemId, summary: [] as never[], content: [] as { type: string; text: string }[] };
                 emit("response.output_item.added", { output_index: outputIndex, item });
-                currentRawReasoning = { itemId, outputIndex, text: "", textBytes: 0 };
+                // Start every reasoning block with a bold header so the Codex
+                // TUI shows it in the main chat view instead of transcript-only.
+                currentRawReasoning = { itemId, outputIndex, text: "", textBytes: 0, rawText: "", rawBytes: 0 };
               }
+              const firstDelta = currentRawReasoning.rawText === "";
               ({ value: currentRawReasoning.text, bytes: currentRawReasoning.textBytes } = appendString(
                 currentRawReasoning.text,
                 currentRawReasoning.textBytes,
+                firstDelta ? CODEX_REASONING_HEADER + event.text : event.text,
+                "reasoning",
+              ));
+              ({ value: currentRawReasoning.rawText, bytes: currentRawReasoning.rawBytes } = appendString(
+                currentRawReasoning.rawText,
+                currentRawReasoning.rawBytes,
                 event.text,
                 "reasoning",
               ));
               emit("response.reasoning_text.delta", {
                 item_id: currentRawReasoning.itemId, output_index: currentRawReasoning.outputIndex,
-                content_index: 0, delta: event.text,
+                content_index: 0, delta: firstDelta ? CODEX_REASONING_HEADER + event.text : event.text,
               });
               break;
             }
@@ -1558,8 +1579,9 @@ function buildResponseJSONWithBudget(
     }
     pushOutput({
       type: "reasoning", id: `rs_${uuid()}`, summary: [],
-      content: [{ type: "reasoning_text", text: currentRawReasoning }],
-    }, currentRawReasoningBytes, "reasoning");
+      content: [{ type: "reasoning_text", text: CODEX_REASONING_HEADER + currentRawReasoning }],
+      encrypted_content: encodeReasoningEnvelope({ txt: currentRawReasoning }),
+    }, currentRawReasoningBytes + bytesOf(CODEX_REASONING_HEADER), "reasoning");
     currentRawReasoning = "";
     currentRawReasoningBytes = 0;
   };
