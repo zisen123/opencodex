@@ -111,6 +111,12 @@ export function buildAnthropicModelInfos(
 ): AnthropicModelInfo[] {
   const out: AnthropicModelInfo[] = [];
   const seen = new Set<string>();
+  // Local UI-cleaning rule: for sophnet routes with an authoritative >=1M window,
+  // emit ONLY the [1m] row. The ordinary row would otherwise appear twice in the
+  // Claude Code picker (same model, 200k vs 1M accounting), which is noise here.
+  // Other providers and native slugs keep the upstream paired-row behavior.
+  const oneMillionOnly = (provider: string, contextWindow: number | undefined): boolean =>
+    provider === "sophnet" && typeof contextWindow === "number" && contextWindow >= ONE_MILLION;
   // [1m] picker variant (devlog 260712 B1): Claude Code accounts exactly 1M for ids
   // carrying the marker (2.1.207 binary: /\[1m\]/i → 1e6, compaction preserved), so
   // ONLY models with an authoritative >=1M window get a second selectable row —
@@ -141,14 +147,18 @@ export function buildAnthropicModelInfos(
   for (const m of routedModels) {
     const id = idStyle === "readable" ? claudeCodeAlias(m.provider, m.id) : aliasForRoute(m.provider, m.id);
     if (seen.has(id)) continue;
-    seen.add(id);
     const ladder = Array.isArray(m.reasoningEfforts) ? m.reasoningEfforts : [];
     const imageInput = Array.isArray(m.inputModalities) ? m.inputModalities.includes("image") : false;
     const info = modelInfo(id, `${m.id} (${m.provider})`, ladder, imageInput, m.contextWindow);
-    out.push(info);
     // Anthropic passthrough guard (audit 021 #3): never auto-widen canonical claude
-    // routes — only a genuine >=1M window earns the variant row there.
-    push1mVariant(info, m.contextWindow);
+    // routes - only a genuine >=1M window earns the variant row there.
+    if (oneMillionOnly(m.provider, m.contextWindow)) {
+      push1mVariant(info, m.contextWindow);
+    } else {
+      seen.add(id);
+      out.push(info);
+      push1mVariant(info, m.contextWindow);
+    }
   }
   return out;
 }
