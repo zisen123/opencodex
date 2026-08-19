@@ -81,6 +81,21 @@ export interface AnthropicModelInfo {
   max_tokens: null;
 }
 
+/**
+ * Local display-name overrides for the sole upstream provider in this deployment.
+ * The generic `${modelId} (${provider})` label is accurate upstream but noisy in
+ * the Claude Code picker when every routed row would carry the same suffix.
+ */
+const DISPLAY_NAME_OVERRIDES: ReadonlyMap<string, string> = new Map([
+  ["sophnet/gpt-5.5", "GPT-5.5"],
+  ["sophnet/gpt-5.4", "GPT-5.4"],
+  ["sophnet/DeepSeek-V4-Pro-0813", "DeepSeek V4 Pro"],
+  ["sophnet/DeepSeek-V4-Flash-0731", "DeepSeek V4 Flash"],
+  ["sophnet/qwen3.8-max", "Qwen3.8 Max"],
+  ["sophnet/Kimi-K3", "Kimi K3"],
+  ["sophnet/GLM-5.3", "GLM 5.3"],
+]);
+
 function modelInfo(id: string, displayName: string, ladder: readonly string[], imageInput: boolean, contextWindow?: number): AnthropicModelInfo {
   return {
     id,
@@ -149,7 +164,8 @@ export function buildAnthropicModelInfos(
     if (seen.has(id)) continue;
     const ladder = Array.isArray(m.reasoningEfforts) ? m.reasoningEfforts : [];
     const imageInput = Array.isArray(m.inputModalities) ? m.inputModalities.includes("image") : false;
-    const info = modelInfo(id, `${m.id} (${m.provider})`, ladder, imageInput, m.contextWindow);
+    const displayName = DISPLAY_NAME_OVERRIDES.get(`${m.provider}/${m.id}`) ?? `${m.id} (${m.provider})`;
+    const info = modelInfo(id, displayName, ladder, imageInput, m.contextWindow);
     // Anthropic passthrough guard (audit 021 #3): never auto-widen canonical claude
     // routes - only a genuine >=1M window earns the variant row there.
     if (oneMillionOnly(m.provider, m.contextWindow)) {
