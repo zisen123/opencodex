@@ -149,7 +149,7 @@ export function buildAnthropicModelInfos(
     if (seen.has(id)) return;
     seen.add(id);
     const window = contextWindow as number;
-    out.push({ ...base, id, display_name: `${base.display_name} · 1M`, max_input_tokens: ONE_MILLION });
+    out.push({ ...base, id, display_name: base.display_name, max_input_tokens: ONE_MILLION });
   };
   for (const slug of nativeSlugs) {
     const id = idStyle === "readable" ? claudeCodeNativeAlias(slug) : aliasForRoute("native", slug);
