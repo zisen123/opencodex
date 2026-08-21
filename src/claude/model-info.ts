@@ -89,6 +89,7 @@ export interface AnthropicModelInfo {
 const DISPLAY_NAME_OVERRIDES: ReadonlyMap<string, string> = new Map([
   ["sophnet/gpt-5.5", "GPT-5.5"],
   ["sophnet/gpt-5.4", "GPT-5.4"],
+  ["sophnet-responses/gpt-5.3-codex", "GPT-5.3 Codex"],
   ["sophnet/DeepSeek-V4-Pro-0813", "DeepSeek V4 Pro"],
   ["sophnet/DeepSeek-V4-Flash-0731", "DeepSeek V4 Flash"],
   ["sophnet/qwen3.8-max", "Qwen3.8 Max"],
