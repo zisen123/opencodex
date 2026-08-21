@@ -254,12 +254,13 @@ export function injectClaudeAgentDefs(config: OcxConfig, windows: Record<string,
   return syncClaudeAgentDefs(buildClaudeAgentDefs(config, windows, configDir), configDir);
 }
 /**
- * Dispatcher directive appended to every ocx-* description. The ocx-route body
- * directive makes the Agent tool's `model` argument INERT (the proxy overrides
- * the request model before routing — live-proven), so instead of asking the
- * dispatcher to omit it (which caused schema-anxiety loops), we hand it a fixed
- * placeholder: any value works; "haiku" is canonical because a haiku-labeled call
- * is visibly a placeholder in the Claude Code UI, while "sonnet" was
- * indistinguishable from a genuine Sonnet call (issue #252).
+ * Dispatcher directive appended to every ocx-* description. The proxy routes by
+ * the frontmatter model (ocx-route body directive), so the correct dispatch is to
+ * OMIT the `model` argument. An earlier revision suggested a "haiku" placeholder
+ * instead; that is unsafe under Claude Code's `enforceAvailableModels`: an explicit
+ * `model` value is checked against the allowlist BEFORE the frontmatter applies,
+ * gets rejected, and silently falls back to the session's default model — live-proven
+ * 2026-08-20 ("Model \"haiku\" is restricted by your organization's settings.
+ * Using claude-ocx-sophnet--qwen3.8-max[1m] instead.").
  */
-const NO_MODEL_ARG = "NOTE: this agent's real model is pinned by the opencodex proxy — the `model` argument is ignored. Pass model: \"haiku\" as a placeholder (or omit it); routing is unaffected either way.";
+const NO_MODEL_ARG = "NOTE: this agent's real model is pinned by the opencodex proxy — the `model` argument is ignored. NEVER pass the `model` argument: it must be omitted so the frontmatter model applies. In `enforceAvailableModels` environments any explicit `model` value is checked against the allowlist instead of the pinned frontmatter model, gets rejected (\"restricted by your organization's settings\"), and silently falls back to the session's default model.";
