@@ -97,7 +97,7 @@ const DISPLAY_NAME_OVERRIDES: ReadonlyMap<string, string> = new Map([
   ["sophnet/GLM-5.3", "GLM 5.3"],
   ["sophnet-anthropic/claude-opus-4-8", "Claude Opus 4.8"],
   ["sophnet-anthropic/claude-opus-4-7", "Claude Opus 4.7"],
-  ["sophnet-anthropic/claude-opus-4-6", "Claude Opus 4.6"],
+  ["sophnet-anthropic/anthropic.claude-opus-4-6", "Claude Opus 4.6"],
   ["sophnet-anthropic/claude-sonnet-4-6", "Claude Sonnet 4.6"],
   ["sophnet-anthropic/claude-haiku-4-5-20251001", "Claude Haiku 4.5"],
 ]);
