@@ -1399,6 +1399,14 @@ export interface OcxProviderConfig {
    */
   apiKeyTransport?: "x-api-key" | "bearer";
   /**
+   * Anthropic Messages inbound passthrough: forward `/v1/messages` VERBATIM to this
+   * provider's `baseUrl` (bypassing translate-and-replay), authenticated with
+   * `provider.apiKey` (see `apiKeyTransport` for the header style). Only meaningful
+   * for models routed to an Anthropic-compatible upstream; models on providers
+   * without this flag keep the translate-and-replay path unchanged.
+   */
+  anthropicPassthrough?: boolean;
+  /**
    * Multi-key pool (API-key twin of OAuth multiauth). `apiKey` always mirrors the ACTIVE
    * entry so routing stays single-key; managed via /api/providers/keys. A legacy bare
    * `apiKey` seeds a one-entry pool on first management touch.

@@ -11,6 +11,7 @@ import { sseFieldValue } from "../lib/sse-decoder";
 import { enforceAnthropicImageLimits, sniffImageDimensions } from "../adapters/anthropic-image-guard";
 import { normalizeAnthropicImages } from "../adapters/anthropic-image-normalize";
 import { AnthropicRequestError, anthropicToResponsesTranslation, extractOcxEffortDirective, extractOcxRouteDirective, resolveInboundModel, type ClaudeCacheKeySource } from "../claude/inbound";
+import { resolveAlias } from "../claude/alias";
 import { resolveDesktop3pAlias } from "../claude/desktop-3p";
 import { recordDesktopRequest } from "../claude/desktop-health";
 import { stripOneMillionMarker } from "../claude/context-windows";
@@ -29,7 +30,7 @@ import { estimateTokens } from "../lib/token-estimate";
 import { NoEligiblePolicyCandidateError, routeModel } from "../router";
 import { evidenceFromBody } from "../routing/request-evidence";
 import { resolveWireProtocolOverride } from "./adapter-resolve";
-import type { OcxConfig } from "../types";
+import type { OcxConfig, OcxProviderConfig } from "../types";
 import { readJsonRequestBody } from "./request-decompress";
 import { addFinalRequestLog, httpStatusForRequestLogTerminal, recordFirstOutput, type RequestLogContext, type RequestLogEntry } from "./request-log";
 import { conversationIdFromClaudeMetadata } from "./request-log-conversation";
@@ -122,24 +123,52 @@ function hasAnthropicNativeCredential(req: Request, config: OcxConfig): boolean 
     || (!!apiKey && apiKey.startsWith("sk-ant-") && !isProxyAdmissionSecret(apiKey, config));
 }
 
+/**
+ * Resolved destination for an Anthropic Messages passthrough turn.
+ * `"native"` = the built-in subscription OAuth pierce (client sk-ant-* credential,
+ * `config.claudeCode.anthropicBaseUrl`); `"provider"` = a configured provider with
+ * `anthropicPassthrough: true` (provider.key credential, forward to `provider.baseUrl`).
+ */
+type PassthroughTarget =
+  | { kind: "native" }
+  | { kind: "provider"; provider: OcxProviderConfig; providerName: string; modelId: string };
+
 function wantsNativePassthrough(
   req: Request,
   config: OcxConfig,
   requestPolicy: RequestPolicyView,
   model: unknown,
-): model is string {
-  if (config.claudeCode?.nativePassthrough === false) return false;
-  if (typeof model !== "string" || !/^(claude|anthropic)/i.test(model)) return false;
+): PassthroughTarget | undefined {
+  if (config.claudeCode?.nativePassthrough === false) return undefined;
+  if (typeof model !== "string") return undefined;
+  // Model routed to a provider that explicitly opts into Anthropic Messages
+  // passthrough: forward verbatim to that provider (provider.apiKey auth). This
+  // bypasses the credential/prefix gates below — the upstream is a third-party
+  // Anthropic-compatible gateway, not api.anthropic.com.
+  // Claude Code surfaces routed models as `claude-ocx-<provider>--<model>` (or
+  // `claude-ocx2-` when escaped); decode the alias to `<provider>/<model>` first.
+  const decoded = resolveAlias(model) ?? model;
+  try {
+    const route = routeModel(config, stripOneMillionMarker(decoded), evidenceFromBody({ model: decoded }));
+    if (route.provider.anthropicPassthrough === true) {
+      return { kind: "provider", provider: route.provider, providerName: route.providerName, modelId: route.modelId };
+    }
+  } catch { /* not routable: fall through to native checks */ }
+  // Native subscription OAuth pierce: only claude/anthropic-prefixed model ids with
+  // the caller's own sk-ant-* credential, and only when the model is NOT an alias
+  // or modelMap entry (those are routed models → translate instead).
+  if (!/^(claude|anthropic)/i.test(model)) return undefined;
   // Authorization and x-api-key both belong to the upstream on this branch. An exposed listener
   // therefore requires the dedicated admission header even though the routed Messages surface
   // keeps accepting all three legacy admission forms.
   if (isApiAuthRequired(requestPolicy)) {
     const dedicated = req.headers.get("x-opencodex-api-key")?.trim() ?? "";
-    if (!isDataPlaneAdmissionSecret(dedicated, config)) return false;
+    if (!isDataPlaneAdmissionSecret(dedicated, config)) return undefined;
   }
-  if (!hasAnthropicNativeCredential(req, config)) return false;
+  if (!hasAnthropicNativeCredential(req, config)) return undefined;
   // An alias or modelMap hit means the user asked for a ROUTED model: translate instead.
-  return resolveInboundModel(model, config.claudeCode) === model;
+  if (resolveInboundModel(model, config.claudeCode) !== model) return undefined;
+  return { kind: "native" };
 }
 
 function shouldForwardNativeHeader(name: string, value: string, config: OcxConfig): boolean {
@@ -345,10 +374,11 @@ async function anthropicNativePassthrough(
   logIds: { requestId: string; start: number } | undefined,
   body: Rec,
   pathname: string,
+  target: PassthroughTarget,
 ): Promise<Response> {
   const model = typeof body.model === "string" ? body.model : "unknown";
   logCtx.model = model;
-  logCtx.provider = "anthropic-native";
+  logCtx.provider = target.kind === "provider" ? target.providerName : "anthropic-native";
   logCtx.requestedModel = model;
   let logged = false;
   const finalize = (status: number, meta: { closeReason: PassthroughCloseReason | "non_stream" }) => {
@@ -357,26 +387,57 @@ async function anthropicNativePassthrough(
     addFinalRequestLog(logIds.requestId, logIds.start, logCtx, status, meta);
   };
 
-  const base = (config.claudeCode?.anthropicBaseUrl ?? "https://api.anthropic.com").replace(/\/$/, "");
+  // Provider passthrough: resolve baseUrl + credential from the provider config.
+  // Native passthrough keeps the existing subscription-OAuth behavior (client's own
+  // sk-ant-* credential forwarded to config.claudeCode.anthropicBaseUrl).
+  const base = target.kind === "provider"
+    ? (target.provider.baseUrl ?? "").replace(/\/$/, "")
+    : (config.claudeCode?.anthropicBaseUrl ?? "https://api.anthropic.com").replace(/\/$/, "");
   const search = new URL(req.url).search;
+  // Provider passthrough substitutes the resolved modelId (publicAlias → upstream id)
+  // and injects the provider's key; native passthrough forwards the caller's body and
+  // credential verbatim.
+  const outgoingBody: Record<string, unknown> = { ...body };
+  if (target.kind === "provider") {
+    outgoingBody.model = target.modelId;
+  }
   // Native passthrough bypasses the anthropic adapter, so the generous image pipeline
   // (devlog/260714_image_normalization_pipeline/040) must run here: tier-normalize then
   // guard the already-Anthropic-wire messages before serialization. Applies to
   // count_tokens too — counts must match what the real send will contain, and the 32MB
   // body cap applies to it equally. Non-message bodies pass through untouched.
-  if (Array.isArray(body.messages)) {
-    await normalizeAnthropicImages(body.messages);
-    enforceAnthropicImageLimits(body.messages);
+  if (Array.isArray(outgoingBody.messages)) {
+    await normalizeAnthropicImages(outgoingBody.messages);
+    enforceAnthropicImageLimits(outgoingBody.messages);
   }
   const headers = new Headers();
-  req.headers.forEach((value, name) => {
-    if (shouldForwardNativeHeader(name, value, config)) headers.set(name, value);
-  });
+  if (target.kind === "provider") {
+    // Provider auth: inject provider.apiKey in the configured transport style, and
+    // forward only the non-credential client headers (strip any client-supplied
+    // anthropic credential so the provider key is authoritative).
+    req.headers.forEach((value, name) => {
+      const lowerName = name.toLowerCase();
+      if (PASSTHROUGH_STRIP_HEADERS.has(lowerName)) return;
+      if (lowerName === "authorization" || lowerName === "x-api-key") return;
+      headers.set(name, value);
+    });
+    if (typeof target.provider.apiKey === "string" && target.provider.apiKey.trim() !== "") {
+      if ((target.provider.apiKeyTransport ?? "x-api-key") === "bearer") {
+        headers.set("authorization", `Bearer ${target.provider.apiKey}`);
+      } else {
+        headers.set("x-api-key", target.provider.apiKey);
+      }
+    }
+  } else {
+    req.headers.forEach((value, name) => {
+      if (shouldForwardNativeHeader(name, value, config)) headers.set(name, value);
+    });
+  }
   headers.set("content-type", "application/json");
 
   const result = await fetchWithHeaderDeadline(
     `${base}${pathname}${search}`,
-    { method: "POST", headers, body: JSON.stringify(body) },
+    { method: "POST", headers, body: JSON.stringify(outgoingBody) },
     config.connectTimeoutMs ?? 200_000,
     req.signal,
   );
@@ -643,8 +704,11 @@ async function handleClaudeMessagesWithBudget(
       );
       if (claudeConversationId) logCtx.conversationId = claudeConversationId;
     }
-    if (isRec(anthropicBody) && wantsNativePassthrough(req, config, requestPolicy, anthropicBody.model)) {
-      return await anthropicNativePassthrough(req, config, logCtx, logIds, anthropicBody, "/v1/messages");
+    const passthroughTarget = isRec(anthropicBody)
+      ? wantsNativePassthrough(req, config, requestPolicy, anthropicBody.model)
+      : undefined;
+    if (passthroughTarget) {
+      return await anthropicNativePassthrough(req, config, logCtx, logIds, anthropicBody as Rec, "/v1/messages", passthroughTarget);
     }
     if (isRec(anthropicBody) && effortOverride) {
       anthropicBody.output_config = {
@@ -1019,8 +1083,12 @@ export async function handleClaudeCountTokens(
     raw.model = model;
   }
   captureClaudeInbound("count_tokens", raw, resolveInboundModel(model, config.claudeCode), req.headers.get("anthropic-beta") ?? undefined);
-  if (wantsNativePassthrough(req, config, requestPolicy, model)) {
-    return await anthropicNativePassthrough(req, config, { model, provider: "anthropic-native", surface: "claude" }, undefined, raw, "/v1/messages/count_tokens");
+  const countTarget = wantsNativePassthrough(req, config, requestPolicy, model);
+  if (countTarget) {
+    const countLogCtx = countTarget.kind === "provider"
+      ? { model, provider: countTarget.providerName, surface: "claude" as const }
+      : { model, provider: "anthropic-native", surface: "claude" as const };
+    return await anthropicNativePassthrough(req, config, countLogCtx, undefined, raw, "/v1/messages/count_tokens", countTarget);
   }
   const inputTokens = estimateClaudeRequestTokens(raw, model);
   return new Response(JSON.stringify({ input_tokens: inputTokens }), {
