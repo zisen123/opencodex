@@ -100,6 +100,8 @@ const DISPLAY_NAME_OVERRIDES: ReadonlyMap<string, string> = new Map([
   ["sophnet-anthropic/anthropic.claude-opus-4-6", "Claude Opus 4.6"],
   ["sophnet-anthropic/claude-sonnet-4-6", "Claude Sonnet 4.6"],
   ["sophnet-anthropic/claude-haiku-4-5-20251001", "Claude Haiku 4.5"],
+  ["openrouter/stealth/ox-alpha", "Ox Alpha"],
+  ["openrouter-responses/stealth/ox-alpha", "Ox Alpha"],
 ]);
 
 function modelInfo(id: string, displayName: string, ladder: readonly string[], imageInput: boolean, contextWindow?: number): AnthropicModelInfo {
@@ -137,7 +139,8 @@ export function buildAnthropicModelInfos(
   // Claude Code picker (same model, 200k vs 1M accounting), which is noise here.
   // Other providers and native slugs keep the upstream paired-row behavior.
   const oneMillionOnly = (provider: string, contextWindow: number | undefined): boolean =>
-    (provider === "sophnet" || provider === "sophnet-anthropic")
+    (provider === "sophnet" || provider === "sophnet-anthropic"
+      || provider === "openrouter" || provider === "openrouter-responses")
     && typeof contextWindow === "number" && contextWindow >= ONE_MILLION;
   // [1m] picker variant (devlog 260712 B1): Claude Code accounts exactly 1M for ids
   // carrying the marker (2.1.207 binary: /\[1m\]/i → 1e6, compaction preserved), so
