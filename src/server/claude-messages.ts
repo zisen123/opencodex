@@ -10,6 +10,7 @@ import { FORWARD_HEADERS } from "../adapters/openai-responses";
 import { sseFieldValue } from "../lib/sse-decoder";
 import { enforceAnthropicImageLimits, sniffImageDimensions } from "../adapters/anthropic-image-guard";
 import { normalizeAnthropicImages } from "../adapters/anthropic-image-normalize";
+import { anthropicMessagesRoot } from "../adapters/anthropic";
 import { AnthropicRequestError, anthropicToResponsesTranslation, extractOcxEffortDirective, extractOcxRouteDirective, resolveInboundModel, type ClaudeCacheKeySource } from "../claude/inbound";
 import { resolveAlias } from "../claude/alias";
 import { resolveDesktop3pAlias } from "../claude/desktop-3p";
@@ -390,8 +391,11 @@ async function anthropicNativePassthrough(
   // Provider passthrough: resolve baseUrl + credential from the provider config.
   // Native passthrough keeps the existing subscription-OAuth behavior (client's own
   // sk-ant-* credential forwarded to config.claudeCode.anthropicBaseUrl).
+  // Provider baseUrl is normalized via anthropicMessagesRoot so `{origin}`, `{origin}/v1`,
+  // or `{origin}/v1/messages` all resolve to the Anthropic origin root (then `pathname`
+  // is appended below); a bare trailing-slash strip alone would mint `{origin}/v1/v1/messages`.
   const base = target.kind === "provider"
-    ? (target.provider.baseUrl ?? "").replace(/\/$/, "")
+    ? anthropicMessagesRoot(target.provider.baseUrl)
     : (config.claudeCode?.anthropicBaseUrl ?? "https://api.anthropic.com").replace(/\/$/, "");
   const search = new URL(req.url).search;
   // Provider passthrough substitutes the resolved modelId (publicAlias → upstream id)

@@ -241,3 +241,53 @@ test("provider passthrough: provider WITHOUT the flag keeps translate-and-replay
     upstream.stop(true);
   }
 });
+test("provider passthrough: baseUrl with /v1 suffix still routes to /v1/messages (URL normalization)", async () => {
+  const captured: Captured[] = [];
+  const upstream = mockAnthropicUpstream(captured);
+  // baseUrl 带 /v1 → 容错归一化到 origin，转发仍打 /v1/messages（而非 /v1/v1/messages）
+  saveConfig(cfg(`${upstream.url}/v1`));
+  const server = startServer(0);
+  try {
+    const res = await fetch(new URL("/v1/messages", server.url), {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "anthropic-version": "2023-06-01",
+        "x-opencodex-api-key": "test",
+      },
+      body: JSON.stringify(claudeBody("claude-ocx-aitokens--ox-alpha")),
+    });
+    expect(res.status).toBe(200);
+    await res.text();
+    expect(captured).toHaveLength(1);
+    expect(captured[0].path).toBe("/v1/messages");
+    expect(captured[0].body.model).toBe("ox-alpha");
+  } finally {
+    await server.stop(true);
+    upstream.stop(true);
+  }
+});
+
+test("provider passthrough: baseUrl with /v1/messages suffix also normalizes", async () => {
+  const captured: Captured[] = [];
+  const upstream = mockAnthropicUpstream(captured);
+  saveConfig(cfg(`${upstream.url}/v1/messages`));
+  const server = startServer(0);
+  try {
+    const res = await fetch(new URL("/v1/messages", server.url), {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "anthropic-version": "2023-06-01",
+        "x-opencodex-api-key": "test",
+      },
+      body: JSON.stringify(claudeBody("claude-ocx-aitokens--ox-alpha")),
+    });
+    expect(res.status).toBe(200);
+    await res.text();
+    expect(captured[0].path).toBe("/v1/messages");
+  } finally {
+    await server.stop(true);
+    upstream.stop(true);
+  }
+});

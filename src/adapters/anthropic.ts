@@ -293,14 +293,22 @@ function usesNativeAnthropicEndpoint(provider: OcxProviderConfig): boolean {
 
 /** Normalize provider baseUrl paths ending in `/`, `/v1`, or `/v1/messages` to `{origin}/v1/messages`. */
 export function anthropicMessagesUrl(baseUrl: string): string {
+  return `${anthropicMessagesRoot(baseUrl)}/v1/messages`;
+}
+
+/**
+ * Normalize a provider baseUrl to its Anthropic origin root: strips a trailing
+ * `/v1/messages`, `/v1`, or `/` so callers can append any path (`/v1/messages`,
+ * `/v1/messages/count_tokens`, ...). Throws on malformed URLs.
+ */
+export function anthropicMessagesRoot(baseUrl: string): string {
   try {
     new URL(baseUrl);
   } catch {
     throw new Error(`anthropic provider has malformed baseUrl: ${baseUrl}`);
   }
   const trimmed = baseUrl.trim().replace(/\/+$/, "");
-  const root = trimmed.replace(/\/v1\/messages\/?$/i, "").replace(/\/v1\/?$/i, "").replace(/\/+$/, "");
-  return `${root}/v1/messages`;
+  return trimmed.replace(/\/v1\/messages\/?$/i, "").replace(/\/v1\/?$/i, "").replace(/\/+$/, "");
 }
 
 function synthesizeToolUseId(): string {
