@@ -134,6 +134,11 @@ export function buildAnthropicModelInfos(
 ): AnthropicModelInfo[] {
   const out: AnthropicModelInfo[] = [];
   const seen = new Set<string>();
+  // Providers hidden from the Claude discovery list entirely. These carry models
+  // that are ALSO exposed through another provider on the same upstream (e.g.
+  // openrouter-responses mirrors openrouter for Codex/DSH responses-wire clients);
+  // listing both mints duplicate picker rows for the same underlying model.
+  const CLAUDE_DISCOVERY_HIDDEN_PROVIDERS: ReadonlySet<string> = new Set(["openrouter-responses"]);
   // Local UI-cleaning rule: for sophnet routes with an authoritative >=1M window,
   // emit ONLY the [1m] row. The ordinary row would otherwise appear twice in the
   // Claude Code picker (same model, 200k vs 1M accounting), which is noise here.
@@ -170,6 +175,7 @@ export function buildAnthropicModelInfos(
     push1mVariant(info, nativeOpenAiContextWindow(slug));
   }
   for (const m of routedModels) {
+    if (CLAUDE_DISCOVERY_HIDDEN_PROVIDERS.has(m.provider)) continue;
     const id = idStyle === "readable" ? claudeCodeAlias(m.provider, m.id) : aliasForRoute(m.provider, m.id);
     if (seen.has(id)) continue;
     const ladder = Array.isArray(m.reasoningEfforts) ? m.reasoningEfforts : [];
