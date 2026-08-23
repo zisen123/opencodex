@@ -540,7 +540,7 @@ export interface OcxClaudeCodeConfig {
    */
   subagentEffort?: "low" | "medium" | "high" | "xhigh" | "max";
   /** Claude-originated web-search override. Unset fields inherit the global sidecar settings. */
-  webSearchSidecar?: { backend?: "openai" | "anthropic"; model?: string };
+  webSearchSidecar?: { backend?: "openai" | "anthropic" | "sophnet"; model?: string };
   /** Claude-originated vision override. Unset fields inherit the global sidecar settings. */
   visionSidecar?: { backend?: "openai" | "anthropic"; model?: string };
   /** Persisted Claude Desktop four-family routing profile. */
@@ -1211,10 +1211,12 @@ export interface OcxWebSearchSidecarConfig {
   /**
    * Which backend actually runs the server-side search. "openai" replays the hosted web_search via
    * the ChatGPT forward provider (gpt-mini sidecar); "anthropic" runs web_search_20250305 on a Claude
-   * model authenticated by the STORED anthropic OAuth credential. Unset resolves to "anthropic" when a
-   * usable anthropic OAuth credential exists, else "openai".
+   * model authenticated by the STORED anthropic OAuth credential; "sophnet" calls Sophnet's hosted
+   * search results API keyed by the sophnet provider's apiKey (no OAuth needed — pure result list,
+   * no sidecar model synthesis). Unset resolves to "anthropic" when a usable anthropic OAuth
+   * credential exists, else "openai".
    */
-  backend?: "openai" | "anthropic";
+  backend?: "openai" | "anthropic" | "sophnet";
   /** Sidecar model that runs the real server-side web_search (must be a native ChatGPT model). */
   model?: string;
   /** Reasoning effort for the sidecar — "minimal" (non-thinking) keeps it fast/cheap. */

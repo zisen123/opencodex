@@ -6,6 +6,7 @@ import type { AttemptRecoveryKind } from "../usage/log";
 import { bridgeToResponsesSSE } from "../bridge";
 import { runWebSearch, type SidecarOutcome, type SidecarOutcomeRecorder, type SidecarSettings } from "./executor";
 import { runAnthropicWebSearch } from "./anthropic-executor";
+import { runSophnetWebSearch } from "./sophnet-executor";
 import { clearableDeadline } from "../lib/abort";
 import { redactSecretString } from "../lib/redact";
 import { readBoundedResponseBody } from "../lib/bounded-body";
@@ -251,11 +252,13 @@ export interface WebSearchLoopDeps {
   adapter: ProviderAdapter;
   incomingMeta: IncomingMeta;
   /** Which executor runs searches. Defaults to "openai" so existing callers keep the ChatGPT path (audit F4). */
-  backend?: "openai" | "anthropic";
-  /** Required for the openai backend; unused (and typically undefined) for the anthropic backend. */
+  backend?: "openai" | "anthropic" | "sophnet";
+  /** Required for the openai backend; unused (and typically undefined) for the anthropic/sophnet backends. */
   forwardProvider?: OcxProviderConfig;
   /** Required for the anthropic backend: the stored-OAuth provider that runs web_search_20250305. */
   anthropicSidecar?: { providerName: string; provider: OcxProviderConfig };
+  /** Required for the sophnet backend: the keyed provider whose apiKey authenticates the search API. */
+  sophnetSidecar?: { providerName: string; provider: OcxProviderConfig };
   hostedTool: Record<string, unknown>;
   selectedForwardHeaders: Headers;
   settings: SidecarSettings;
@@ -307,6 +310,7 @@ export async function runWithWebSearch(deps: WebSearchLoopDeps): Promise<Respons
   const { parsed, selectedForwardHeaders, forwardProvider, hostedTool, settings, maxSearches, abortSignal, recordSidecarOutcome } = deps;
   const backend = deps.backend ?? "openai";
   const anthropicSidecar = deps.anthropicSidecar;
+  const sophnetSidecar = deps.sophnetSidecar;
   // Mutable: 429 key-failover (deps.on429) can swap in a rebuilt adapter mid-loop.
   let adapter = deps.adapter;
 
@@ -658,7 +662,9 @@ export async function runWithWebSearch(deps: WebSearchLoopDeps): Promise<Respons
         try {
           outcome = backend === "anthropic" && anthropicSidecar
             ? await runAnthropicWebSearch(query, anthropicSidecar.providerName, anthropicSidecar.provider, settings, signal)
-            : await runWebSearch(query, hostedTool, forwardProvider!, selectedForwardHeaders, settings, signal, recordSidecarOutcome);
+            : backend === "sophnet" && sophnetSidecar
+              ? await runSophnetWebSearch(query, sophnetSidecar.providerName, sophnetSidecar.provider, settings, signal)
+              : await runWebSearch(query, hostedTool, forwardProvider!, selectedForwardHeaders, settings, signal, recordSidecarOutcome);
           if (signal.aborted) throw new LoopError(499, "client closed request during web-search");
         } catch (e) {
           if (e instanceof LoopError) throw e;

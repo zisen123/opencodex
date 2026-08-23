@@ -10,10 +10,16 @@ import { buildWebSearchTool, extractHostedWebSearch, WEB_SEARCH_TOOL_NAME } from
 export { runWithWebSearch } from "./loop";
 export { buildWebSearchTool, extractHostedWebSearch, WEB_SEARCH_TOOL_NAME };
 export { runAnthropicWebSearch, parseAnthropicSidecarSSE } from "./anthropic-executor";
+export { runSophnetWebSearch } from "./sophnet-executor";
+
+/** Provider whose `apiKey` authenticates the sophnet search backend. */
+const SOPHNET_SEARCH_PROVIDER = "sophnet";
 
 const DEFAULT_SIDECAR_MODEL = "gpt-5.6-luna";
 // Default Claude model for the anthropic-backed sidecar (used when cfg.model is unset).
 const DEFAULT_ANTHROPIC_SIDECAR_MODEL = "claude-sonnet-5";
+// Display-only label for the sophnet backend (a pure results API has no sidecar model).
+const SOPHNET_SEARCH_MODEL_LABEL = "sophnet-search";
 // "low" is the lightest effort the ChatGPT backend allows with web_search ("minimal" is rejected:
 // "tools cannot be used with reasoning.effort 'minimal'") — keeps the sidecar fast/cheap.
 const DEFAULT_SIDECAR_REASONING = "low";
@@ -78,6 +84,31 @@ export interface AnthropicSidecarProvider {
   provider: OcxProviderConfig;
 }
 
+/** An enabled provider carrying the sophnet search API key (backend "sophnet"). */
+export interface SophnetSidecarProvider {
+  providerName: string;
+  provider: OcxProviderConfig;
+}
+
+/** First enabled provider with an apiKey usable as the sophnet search credential. */
+export function findSophnetSidecarProvider(config: OcxConfig): SophnetSidecarProvider | undefined {
+  for (const [name, prov] of Object.entries(config.providers)) {
+    if (prov.disabled === true) continue;
+    if (!prov.apiKey?.trim()) continue;
+    // The sophnet search endpoint lives on the sophnet origin; prefer the well-known provider
+    // name, then fall back to any enabled keyed provider whose baseUrl shares that origin.
+    if (name === SOPHNET_SEARCH_PROVIDER) return { providerName: name, provider: prov };
+    try {
+      const base = new URL(prov.baseUrl);
+      const want = new URL(SOPHNET_SEARCH_BASE_URL);
+      if (base.origin === want.origin) return { providerName: name, provider: prov };
+    } catch { /* ignore malformed baseUrl */ }
+  }
+  return undefined;
+}
+
+const SOPHNET_SEARCH_BASE_URL = "https://www.sophnet.com/api/open-apis/v1";
+
 /**
  * First enabled anthropic-adapter OAuth provider whose ACTIVE account holds a usable credential — the
  * only path that can run web_search_20250305 without a ChatGPT forward provider. Presence is decided by
@@ -102,18 +133,20 @@ export function findAnthropicSidecarProvider(config: OcxConfig): AnthropicSideca
  * to the Anthropic API.
  */
 export function resolveSidecarBackend(
-  explicit: "openai" | "anthropic" | undefined,
-): "openai" | "anthropic" {
-  return explicit === "anthropic" ? "anthropic" : "openai";
+  explicit: "openai" | "anthropic" | "sophnet" | undefined,
+): "openai" | "anthropic" | "sophnet" {
+  return explicit === "anthropic" || explicit === "sophnet" ? explicit : "openai";
 }
 
 export interface SidecarPlan {
   /** Which executor runs the search. Anthropic does not require a forward provider. */
-  backend: "openai" | "anthropic";
-  /** Present for the openai backend (ChatGPT forward path); undefined for anthropic. */
+  backend: "openai" | "anthropic" | "sophnet";
+  /** Present for the openai backend (ChatGPT forward path); undefined for anthropic/sophnet. */
   forwardSidecar?: ResolvedOpenAiForwardSidecar;
   /** Present for the anthropic backend (stored-OAuth /v1/messages path); undefined for openai. */
   anthropicSidecar?: AnthropicSidecarProvider;
+  /** Present for the sophnet backend (provider apiKey -> hosted search API); undefined otherwise. */
+  sophnetSidecar?: SophnetSidecarProvider;
   hostedTool: Record<string, unknown>;
   settings: SidecarSettings;
   maxSearches: number;
@@ -132,7 +165,9 @@ export function shouldResolveOpenAiWebSearchSidecar(
 ): boolean {
   if (!parsed._webSearch || isPassthrough) return false;
   const cfg = config.webSearchSidecar ?? {};
-  return cfg.enabled !== false && resolveSidecarBackend(cfg.backend) === "openai";
+  if (cfg.enabled === false) return false;
+  // The sophnet backend never needs the ChatGPT forward sidecar.
+  return resolveSidecarBackend(cfg.backend) === "openai";
 }
 
 /**
@@ -158,6 +193,7 @@ export function planWebSearch(
   // Same `?? 200_000` default the server applies when threading connectTimeoutMs into the loop.
   const connectTimeoutMs = config.connectTimeoutMs ?? 200_000;
   const anthropicSidecar = findAnthropicSidecarProvider(config);
+  const sophnetSidecar = findSophnetSidecarProvider(config);
   const backend = resolveSidecarBackend(cfg.backend);
   const maxSearches = cfg.maxSearchesPerTurn ?? DEFAULT_MAX_SEARCHES;
   const stallTimeoutSec = webSearchStallTimeoutSec(
@@ -182,6 +218,23 @@ export function planWebSearch(
       anthropicSidecar,
       hostedTool: parsed._webSearch,
       settings: { model: cfg.model ?? DEFAULT_ANTHROPIC_SIDECAR_MODEL, reasoning, timeoutMs, describeImages },
+      maxSearches,
+      routedModelStallTimeoutMs,
+      stallTimeoutSec,
+      streamRoutedModelOutput,
+    };
+  }
+
+  // Sophnet backend: pure search-results API keyed by the sophnet provider's own apiKey — no OAuth
+  // or ChatGPT login needed. An explicit choice with no usable provider FAILS CLOSED like anthropic.
+  if (backend === "sophnet") {
+    if (!sophnetSidecar) return undefined;
+    return {
+      backend: "sophnet",
+      sophnetSidecar,
+      hostedTool: parsed._webSearch,
+      // `model`/`reasoning` are meaningless for a pure results API; keep defaults so SidecarSettings stays uniform.
+      settings: { model: cfg.model ?? SOPHNET_SEARCH_MODEL_LABEL, reasoning, timeoutMs, describeImages },
       maxSearches,
       routedModelStallTimeoutMs,
       stallTimeoutSec,
