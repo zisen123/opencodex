@@ -17,7 +17,8 @@ import { resolveDesktop3pAlias } from "../claude/desktop-3p";
 import { recordDesktopRequest } from "../claude/desktop-health";
 import { stripOneMillionMarker } from "../claude/context-windows";
 import { captureClaudeInbound } from "../claude/inbound-debug";
-import { isTransientUpstreamStatus } from "../lib/upstream-retry";
+import { isTransientUpstreamStatus, releaseResponseBodyBestEffort, sleepWithAbort } from "../lib/upstream-retry";
+import { rateLimitRetryDelayMs, rateLimitRetryPolicyFor } from "../providers/key-failover";
 import { resolveClientRetryAfter } from "../lib/retry-after";
 import {
   anthropicErrorBody,
@@ -439,28 +440,76 @@ async function anthropicNativePassthrough(
   }
   headers.set("content-type", "application/json");
 
-  const result = await fetchWithHeaderDeadline(
-    `${base}${pathname}${search}`,
-    { method: "POST", headers, body: JSON.stringify(outgoingBody) },
-    config.connectTimeoutMs ?? 200_000,
-    req.signal,
-  );
-  if (result.kind === "timeout") {
+  // Same-target 429 wait-and-retry (opt-in `retryOn429`, applies to provider passthrough
+  // only). Native subscription passthrough keeps its OAuth account-failover semantics and
+  // never replays on the same credential. Mirrors responses core.ts: pre-stream only — a
+  // 429 arrives before any bytes are relayed, so replaying the identical (string-body)
+  // request is lossless.
+  const rateLimitPolicy = target.kind === "provider"
+    ? rateLimitRetryPolicyFor(target.provider)
+    : null;
+  const providerTarget = target.kind === "provider" ? target : null;
+  let hdrResult: HeaderDeadlineFetchResult = { kind: "error", error: new Error("unreachable") };
+  let upstream: Response | null = null;
+  let rateLimitRetries = 0;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    hdrResult = await fetchWithHeaderDeadline(
+      `${base}${pathname}${search}`,
+      { method: "POST", headers, body: JSON.stringify(outgoingBody) },
+      config.connectTimeoutMs ?? 200_000,
+      req.signal,
+    );
+    if (hdrResult.kind !== "response") break;
+    const candidate = hdrResult.upstream;
+    if (
+      candidate.status !== 429
+      || rateLimitPolicy === null
+      || providerTarget === null
+      || rateLimitRetries >= rateLimitPolicy.attempts
+    ) {
+      upstream = candidate;
+      break;
+    }
+    rateLimitRetries += 1;
+    const retryAfterHeader = candidate.headers.get("retry-after");
+    const delayMs = rateLimitRetryDelayMs(rateLimitPolicy, retryAfterHeader, Date.now());
+    // Release the unread 429 body before waiting so sockets do not accumulate under a
+    // rate-limit storm (same guarantee as the responses-line same-target helper).
+    await releaseResponseBodyBestEffort(candidate.body, req.signal);
+    console.warn(
+      `[anthropic-passthrough] 429 from ${providerTarget.providerName} (${providerTarget.modelId}) — retrying (${rateLimitRetries}/${rateLimitPolicy.attempts})`,
+    );
+    try {
+      await sleepWithAbort(delayMs, req.signal);
+    } catch {
+      finalize(req.signal?.aborted ? 499 : 504, { closeReason: "client_cancel" });
+      return anthropicErrorResponse(
+        req.signal?.aborted ? 499 : 504,
+        req.signal?.aborted
+          ? "client closed request during anthropic passthrough rate-limit wait"
+          : "anthropic passthrough rate-limit wait interrupted",
+        req.signal?.aborted ? "api_error" : "timeout_error",
+      );
+    }
+  }
+  if (hdrResult.kind === "timeout") {
     finalize(504, { closeReason: "non_stream" });
     return anthropicErrorResponse(504, "anthropic passthrough timed out waiting for response headers", "timeout_error");
   }
-  if (result.kind === "error") {
-    const err = result.error;
+  if (hdrResult.kind === "error") {
+    const err = hdrResult.error;
     finalize(502, { closeReason: "non_stream" });
     return anthropicErrorResponse(502, `anthropic passthrough failed: ${err instanceof Error ? err.message : String(err)}`, "api_error");
   }
-  const upstream = result.upstream;
+  const passthroughUpstream = upstream!;
+  const upstreamResponse = passthroughUpstream;
 
-  const contentType = upstream.headers.get("content-type") ?? "application/json";
+  const contentType = upstreamResponse.headers.get("content-type") ?? "application/json";
   const bodyGuard = resolvePassthroughBodyGuard(config, req.signal);
-  if (upstream.ok && contentType.includes("text/event-stream") && upstream.body) {
-    return new Response(tapAnthropicSseForLog(upstream.body, logCtx, finalize, bodyGuard), {
-      status: upstream.status,
+  if (upstreamResponse.ok && contentType.includes("text/event-stream") && upstreamResponse.body) {
+    return new Response(tapAnthropicSseForLog(upstreamResponse.body, logCtx, finalize, bodyGuard), {
+      status: upstreamResponse.status,
       headers: {
         "Content-Type": contentType,
         "Cache-Control": "no-cache",
@@ -470,7 +519,7 @@ async function anthropicNativePassthrough(
   }
   // Non-stream (count_tokens, errors, stream:false): relay verbatim under the same
   // idle/size bounds — headers are NOT yet sent here, so real statuses are available.
-  const bodyResult = await readBoundedPassthroughBody(upstream, bodyGuard);
+  const bodyResult = await readBoundedPassthroughBody(upstreamResponse, bodyGuard);
   if (bodyResult.kind === "client_cancel") {
     finalize(499, { closeReason: "client_cancel" });
     return anthropicErrorResponse(499, "client closed request during anthropic passthrough", "api_error");
@@ -484,16 +533,16 @@ async function anthropicNativePassthrough(
     return anthropicErrorResponse(502, `anthropic passthrough body exceeded ${bodyGuard.maxBytes} bytes`, "api_error");
   }
   const text = bodyResult.text;
-  if (upstream.ok) {
+  if (upstreamResponse.ok) {
     try {
       const parsed = JSON.parse(text) as { usage?: Rec };
       if (isRec(parsed?.usage)) logCtx.usage = anthropicUsageToOcx(parsed.usage);
     } catch { /* count_tokens etc. */ }
   }
-  finalize(upstream.status, { closeReason: "non_stream" });
-  const retryAfter = upstream.headers.get("retry-after");
+  finalize(upstreamResponse.status, { closeReason: "non_stream" });
+  const retryAfter = upstreamResponse.headers.get("retry-after");
   return new Response(text, {
-    status: upstream.status,
+    status: upstreamResponse.status,
     headers: { "Content-Type": contentType, ...(retryAfter ? { "Retry-After": retryAfter } : {}) },
   });
 }

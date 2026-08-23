@@ -29,7 +29,8 @@ afterEach(() => {
 
 interface Captured { path: string; headers: Headers; body: any }
 
-function mockAnthropicUpstream(captured: Captured[]) {
+function mockAnthropicUpstream(captured: Captured[], rateLimitBefore = 0) {
+  let hits = 0;
   return Bun.serve({
     port: 0,
     async fetch(req) {
@@ -37,6 +38,15 @@ function mockAnthropicUpstream(captured: Captured[]) {
       captured.push({ path: url.pathname + url.search, headers: req.headers, body: await req.json() });
       if (url.pathname.endsWith("/count_tokens")) {
         return Response.json({ input_tokens: 4242 });
+      }
+      // 429 storm: return rate-limit responses for the first `rateLimitBefore` hits,
+      // then the normal SSE success afterwards (retryOn429 must swallow them).
+      if (rateLimitBefore > 0 && hits < rateLimitBefore) {
+        hits += 1;
+        return new Response(JSON.stringify({ error: { type: "rate_limit_error", message: "provider temporarily rate-limited upstream (mock)" } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json", "Retry-After": "0" },
+        });
       }
       const frames = [
         `event: message_start\ndata: ${JSON.stringify({ type: "message_start", message: { id: "msg_up", type: "message", role: "assistant", content: [], model: "ox-alpha", stop_reason: null, stop_sequence: null, usage: { input_tokens: 10, output_tokens: 1 } } })}\n\n`,
@@ -57,6 +67,7 @@ function cfg(upstreamBaseUrl: string, opts: {
   apiKey?: string;
   apiKeyTransport?: "x-api-key" | "bearer";
   passthrough?: boolean;
+  retryOn429?: Record<string, unknown>;
   extraProviders?: Record<string, unknown>;
 } = {}): OcxConfig {
   const {
@@ -64,6 +75,7 @@ function cfg(upstreamBaseUrl: string, opts: {
     apiKey = "sk-provider-key-123",
     apiKeyTransport,
     passthrough = true,
+    retryOn429,
     extraProviders,
   } = opts;
   return {
@@ -76,6 +88,7 @@ function cfg(upstreamBaseUrl: string, opts: {
         apiKey,
         ...(apiKeyTransport ? { apiKeyTransport } : {}),
         ...(passthrough ? { anthropicPassthrough: true } : {}),
+        ...(retryOn429 ? { retryOn429 } : {}),
         allowPrivateNetwork: true,
         liveModels: false,
         models: ["ox-alpha"],
@@ -286,6 +299,87 @@ test("provider passthrough: baseUrl with /v1/messages suffix also normalizes", a
     expect(res.status).toBe(200);
     await res.text();
     expect(captured[0].path).toBe("/v1/messages");
+  } finally {
+    await server.stop(true);
+    upstream.stop(true);
+  }
+});
+
+test("provider passthrough: retryOn429 swallows upstream 429s and succeeds on replay", async () => {
+  const captured: Captured[] = [];
+  // 前 2 次返回 429，之后成功 → 重试循环应吞掉限流并最终 200
+  const upstream = mockAnthropicUpstream(captured, 2);
+  saveConfig(cfg(upstream.url.toString(), { retryOn429: { attempts: 5 } }));
+  const server = startServer(0);
+  try {
+    const res = await fetch(new URL("/v1/messages", server.url), {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "anthropic-version": "2023-06-01",
+        "x-opencodex-api-key": "test",
+      },
+      body: JSON.stringify(claudeBody("claude-ocx-aitokens--ox-alpha")),
+    });
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toContain("provider hi");
+    // 2 次 429 + 1 次成功 = 3 次上游请求
+    expect(captured).toHaveLength(3);
+    // 前两次是 429（记录在 captured 中），第三次是成功 SSE
+    expect(captured[0].body.model).toBe("ox-alpha");
+    expect(captured[1].body.model).toBe("ox-alpha");
+  } finally {
+    await server.stop(true);
+    upstream.stop(true);
+  }
+});
+
+test("provider passthrough: retryOn429 exhausted still returns 429 to client", async () => {
+  const captured: Captured[] = [];
+  // 永远 429（limit 极大），attempts=2 → 最多重试 2 次，最终返回 429
+  const upstream = mockAnthropicUpstream(captured, 999);
+  saveConfig(cfg(upstream.url.toString(), { retryOn429: { attempts: 2 } }));
+  const server = startServer(0);
+  try {
+    const res = await fetch(new URL("/v1/messages", server.url), {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "anthropic-version": "2023-06-01",
+        "x-opencodex-api-key": "test",
+      },
+      body: JSON.stringify(claudeBody("claude-ocx-aitokens--ox-alpha")),
+    });
+    expect(res.status).toBe(429);
+    const body = await res.json();
+    expect(body.error.type).toBe("rate_limit_error");
+    // 1 次原始 + attempts=2 次重试 = 3 次上游请求
+    expect(captured).toHaveLength(3);
+  } finally {
+    await server.stop(true);
+    upstream.stop(true);
+  }
+});
+
+test("provider passthrough: retryOn429 disabled leaves single 429 passthrough", async () => {
+  const captured: Captured[] = [];
+  const upstream = mockAnthropicUpstream(captured, 999);
+  // retryOn429: { enabled: false } → 不重试，直接返回 429
+  saveConfig(cfg(upstream.url.toString(), { retryOn429: { enabled: false, attempts: 5 } }));
+  const server = startServer(0);
+  try {
+    const res = await fetch(new URL("/v1/messages", server.url), {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "anthropic-version": "2023-06-01",
+        "x-opencodex-api-key": "test",
+      },
+      body: JSON.stringify(claudeBody("claude-ocx-aitokens--ox-alpha")),
+    });
+    expect(res.status).toBe(429);
+    expect(captured).toHaveLength(1);
   } finally {
     await server.stop(true);
     upstream.stop(true);
