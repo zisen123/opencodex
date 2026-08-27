@@ -139,26 +139,42 @@ export function buildAnthropicModelInfos(
   // openrouter-responses mirrors openrouter for Codex/DSH responses-wire clients);
   // listing both mints duplicate picker rows for the same underlying model.
   const CLAUDE_DISCOVERY_HIDDEN_PROVIDERS: ReadonlySet<string> = new Set(["openrouter-responses"]);
+  // Operator opt-in (2026-08-27): models whose AUTHORITATIVE window is < 1M but the
+  // operator explicitly wants the [1m] picker row anyway, accepting that Claude Code
+  // will then account 1M and the HUMAN compacts manually before the real limit
+  // (gpt-5.3-codex 400K / gpt-5.4 320K upstream). Rationale: the alternative for
+  // unrecognized ids is CC's conservative 200K window enforcement (startup warning
+  // + premature compaction), which halves the usable window. Every id listed here
+  // must have a real window >= 320K so the over-fill risk is bounded.
+  const MANUAL_1M_ROWS: ReadonlySet<string> = new Set([
+    "sophnet-responses/gpt-5.3-codex",
+    "sophnet/gpt-5.4",
+  ]);
   // Local UI-cleaning rule: for sophnet routes with an authoritative >=1M window,
   // emit ONLY the [1m] row. The ordinary row would otherwise appear twice in the
   // Claude Code picker (same model, 200k vs 1M accounting), which is noise here.
   // Other providers and native slugs keep the upstream paired-row behavior.
-  const oneMillionOnly = (provider: string, contextWindow: number | undefined): boolean =>
-    (provider === "sophnet" || provider === "sophnet-anthropic"
+  // MANUAL_1M_ROWS entries follow the same only-the-[1m]-row shape.
+  const oneMillionOnly = (provider: string, contextWindow: number | undefined, modelId: string): boolean =>
+    ((provider === "sophnet" || provider === "sophnet-anthropic"
       || provider === "openrouter" || provider === "openrouter-responses")
-    && typeof contextWindow === "number" && contextWindow >= ONE_MILLION;
+      && typeof contextWindow === "number" && contextWindow >= ONE_MILLION)
+    || (typeof contextWindow === "number" && MANUAL_1M_ROWS.has(`${provider}/${modelId}`));
   // [1m] picker variant (devlog 260712 B1): Claude Code accounts exactly 1M for ids
   // carrying the marker (2.1.207 binary: /\[1m\]/i → 1e6, compaction preserved), so
   // ONLY models with an authoritative >=1M window get a second selectable row —
   // the auto-context widening that let a 372K route carry the marker (and be
   // over-filled) is the #854 defect and does not come back. Guards (audit R1#11):
   // same dedupe set, never double-suffix.
-  const push1mVariant = (base: AnthropicModelInfo, contextWindow: number | undefined) => {
+  const push1mVariant = (base: AnthropicModelInfo, contextWindow: number | undefined, manualKey?: string) => {
     // The [1m] marker makes Claude Code account 1e6 tokens for the row, so it
     // may only name models whose AUTHORITATIVE effective window is >= 1M —
     // never the auto-context widening, which would mark a 372K route and have
-    // Claude Code over-fill it (the #854 defect).
-    if (contextWindow === undefined || contextWindow < ONE_MILLION) return;
+    // Claude Code over-fill it (the #854 defect). MANUAL_1M_ROWS entries are
+    // the operator-opt-in exception: real window < 1M but >= 320K, human does
+    // the compaction (see MANUAL_1M_ROWS above).
+    const manual1m = manualKey !== undefined && MANUAL_1M_ROWS.has(manualKey);
+    if (!manual1m && (contextWindow === undefined || contextWindow < ONE_MILLION)) return;
     if (base.id.includes("[1m]")) return;
     const id = `${base.id}[1m]`;
     if (seen.has(id)) return;
@@ -184,12 +200,12 @@ export function buildAnthropicModelInfos(
     const info = modelInfo(id, displayName, ladder, imageInput, m.contextWindow);
     // Anthropic passthrough guard (audit 021 #3): never auto-widen canonical claude
     // routes - only a genuine >=1M window earns the variant row there.
-    if (oneMillionOnly(m.provider, m.contextWindow)) {
-      push1mVariant(info, m.contextWindow);
+    if (oneMillionOnly(m.provider, m.contextWindow, m.id)) {
+      push1mVariant(info, m.contextWindow, `${m.provider}/${m.id}`);
     } else {
       seen.add(id);
       out.push(info);
-      push1mVariant(info, m.contextWindow);
+      push1mVariant(info, m.contextWindow, `${m.provider}/${m.id}`);
     }
   }
   return out;
