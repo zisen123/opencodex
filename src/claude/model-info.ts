@@ -91,7 +91,7 @@ const DISPLAY_NAME_OVERRIDES: ReadonlyMap<string, string> = new Map([
   ["sophnet/gpt-5.4", "GPT-5.4"],
   ["sophnet-responses/gpt-5.3-codex", "GPT-5.3 Codex"],
   ["sophnet/DeepSeek-V4-Pro-0813", "DeepSeek V4 Pro"],
-  ["sophnet/DeepSeek-V4-Flash-0731", "DeepSeek V4 Flash"],
+  ["sophnet-responses/DeepSeek-V4-Flash-Vision-Exp", "DeepSeek V4 Flash Vision"],
   ["sophnet/qwen3.8-max", "Qwen3.8 Max"],
   ["sophnet/Kimi-K3", "Kimi K3"],
   ["sophnet/GLM-5.3", "GLM 5.3"],
@@ -156,7 +156,7 @@ export function buildAnthropicModelInfos(
   // Other providers and native slugs keep the upstream paired-row behavior.
   // MANUAL_1M_ROWS entries follow the same only-the-[1m]-row shape.
   const oneMillionOnly = (provider: string, contextWindow: number | undefined, modelId: string): boolean =>
-    ((provider === "sophnet" || provider === "sophnet-anthropic"
+    ((provider === "sophnet" || provider === "sophnet-anthropic" || provider === "sophnet-responses"
       || provider === "openrouter" || provider === "openrouter-responses")
       && typeof contextWindow === "number" && contextWindow >= ONE_MILLION)
     || (typeof contextWindow === "number" && MANUAL_1M_ROWS.has(`${provider}/${modelId}`));
