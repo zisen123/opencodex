@@ -93,6 +93,7 @@ const DISPLAY_NAME_OVERRIDES: ReadonlyMap<string, string> = new Map([
   ["sophnet/DeepSeek-V4-Pro-0813", "DeepSeek V4 Pro"],
   ["sophnet-responses/DeepSeek-V4-Flash-Vision-Exp", "DeepSeek V4 Flash Vision"],
   ["sophnet/qwen3.8-max", "Qwen3.8 Max"],
+  ["sophnet/qwen3.8-flash", "Qwen3.8 Flash"],
   ["sophnet/Kimi-K3", "Kimi K3"],
   ["sophnet/GLM-5.3", "GLM 5.3"],
   ["sophnet-anthropic/claude-opus-4-8", "Claude Opus 4.8"],
