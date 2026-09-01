@@ -96,6 +96,7 @@ const DISPLAY_NAME_OVERRIDES: ReadonlyMap<string, string> = new Map([
   ["sophnet/qwen3.8-flash", "Qwen3.8 Flash"],
   ["sophnet/Kimi-K3", "Kimi K3"],
   ["sophnet/GLM-5.3", "GLM 5.3"],
+  ["sophnet/glm-5.3-flash", "GLM 5.3 Flash"],
   ["sophnet-anthropic/claude-opus-4-8", "Claude Opus 4.8"],
   ["sophnet-anthropic/claude-opus-4-7", "Claude Opus 4.7"],
   ["sophnet-anthropic/anthropic.claude-opus-4-6", "Claude Opus 4.6"],
