@@ -20,6 +20,7 @@ import { captureClaudeInbound } from "../claude/inbound-debug";
 import { isTransientUpstreamStatus, releaseResponseBodyBestEffort, sleepWithAbort } from "../lib/upstream-retry";
 import { rateLimitRetryDelayMs, rateLimitRetryPolicyFor } from "../providers/key-failover";
 import { resolveClientRetryAfter } from "../lib/retry-after";
+import { uuidFromHex } from "../lib/session-id";
 import {
   anthropicErrorBody,
   anthropicErrorResponse,
@@ -179,12 +180,6 @@ function shouldForwardNativeHeader(name: string, value: string, config: OcxConfi
   if (lowerName !== "authorization" && lowerName !== "x-api-key") return true;
   const token = singleCredentialToken(lowerName, value);
   return !!token && !isProxyAdmissionSecret(token, config);
-}
-
-/** Format a 32-hex cache key as a uuid-shaped session id (version/variant nibbles forced). */
-function uuidFromHex(hex32: string): string {
-  const h = (hex32 + "0".repeat(32)).slice(0, 32);
-  return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`;
 }
 
 function anthropicUsageToOcx(usage: Rec | undefined): { inputTokens: number; outputTokens: number; cachedInputTokens?: number; cacheReadInputTokens?: number; cacheCreationInputTokens?: number } | undefined {
@@ -808,12 +803,16 @@ async function handleClaudeMessagesWithBudget(
   // bodies: it 400s on sampling params ("Unsupported parameter: max_output_tokens",
   // verified live 2026-07-11). Strip them for that route; routed providers keep them.
   let nativeRoute = false;
+  let chatRoute = false;
   try {
     const route = routeModel(config, internalBody.model as string, evidenceFromBody(internalBody));
     // Settle the wire once so the sampling decision below reads the effective
     // adapter rather than the provider-wide default (#404).
     route.provider = resolveWireProtocolOverride(route.providerName, route.modelId, route.provider, "anthropic");
     logCtx.routeDecision = route.routeDecision;
+    if (route.provider.adapter === "openai-chat") {
+      chatRoute = true;
+    }
     if (route.provider.adapter === "openai-responses") {
       nativeRoute = true;
       delete internalBody.max_output_tokens;
@@ -868,14 +867,17 @@ async function handleClaudeMessagesWithBudget(
       headers.set("chatgpt-account-id", token.chatgptAccountId);
     }
   }
-  if (nativeRoute) {
-    // ChatGPT-backend prompt-cache affinity rides the session_id HEADER (codex
-    // clients always send their session uuid; devlog 090 follow-up: body-level
-    // prompt_cache_key alone still yielded cached_tokens:0). Claude Code never sends
-    // the header, so synthesize a stable per-session uuid from the same cache key —
-    // but ONLY for a real per-session key (metadata.user_id). The system-hash fallback
-    // key is shared across Desktop conversations, and a shared session_id's backend
-    // semantics are unproven (audit 133 R2#3): body prompt_cache_key only there.
+  if (nativeRoute || chatRoute) {
+    // Prompt-cache affinity rides a stable per-session `session_id` header. On the
+    // native ChatGPT backend it is the session_id HEADER (codex clients always send
+    // their session uuid; devlog 090 follow-up: body-level prompt_cache_key alone still
+    // yielded cached_tokens:0). On the openai-chat adapter path the adapter mirrors
+    // this header upstream and also forwards the body `prompt_cache_key`, giving
+    // sophnet-style chat gateways both affinity channels (CPA commit 511b8a99 parity).
+    // Claude Code never sends the header, so synthesize a stable per-session uuid from
+    // the same cache key — but ONLY for a real per-session key (metadata.user_id). The
+    // system-hash fallback key is shared across Desktop conversations, and a shared
+    // session_id's backend semantics are unproven (audit 133 R2#3): body prompt_cache_key only there.
     if (cacheKeySource === "metadata" && !headers.has("session_id") && typeof internalBody.prompt_cache_key === "string") {
       headers.set("session_id", uuidFromHex(internalBody.prompt_cache_key));
     }

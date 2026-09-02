@@ -1,4 +1,4 @@
-import type { AdapterRequest, ProviderAdapter } from "./base";
+import type { AdapterRequest, IncomingMeta, ProviderAdapter } from "./base";
 import type { AdapterEvent, OcxAssistantMessage, OcxContentPart, OcxMessage, OcxParsedRequest, OcxProviderConfig, OcxTextContent, OcxThinkingContent, OcxToolCall, OcxUsage } from "../types";
 import { isAllowedToolChoice, modelInList, namespacedToolName, resolveToolChoiceWireName, toolChoiceToolPredicate } from "../types";
 import { mapReasoningEffort, modelRecordValue } from "../reasoning-effort";
@@ -1182,7 +1182,7 @@ export function createOpenAIChatAdapter(provider: OcxProviderConfig): ProviderAd
 
     formatErrorBody: formatOpenAIChatErrorBody,
 
-    buildRequest(parsed: OcxParsedRequest) {
+    buildRequest(parsed: OcxParsedRequest, incoming?: IncomingMeta) {
       const { url, headers, hasCredential } = openAIChatTransport(provider);
 
       const messages = messagesToChatFormat(parsed, provider);
@@ -1299,9 +1299,25 @@ export function createOpenAIChatAdapter(provider: OcxProviderConfig): ProviderAd
       if (parsed.options.frequencyPenalty !== undefined && !modelInList(provider.noPenaltyModels, parsed.modelId)) {
         body.frequency_penalty = parsed.options.frequencyPenalty;
       }
-      if (provider.promptCacheKey && parsed.options.promptCacheKey !== undefined) {
+      // CC translate-and-replay cache continuity (CPA commit 511b8a99 parity): a Claude
+      // (Anthropic Messages) replay whose prompt_cache_key is a stable per-session key derived
+      // from metadata.user_id MUST reach the upstream chat body even when the provider has NOT
+      // opted into `promptCacheKey`. Without this, the translated path strips the key and the
+      // upstream can only do exact-prefix matching, which almost always misses on CC's
+      // non-append-only context. Session affinity is scoped to the claude surface: a shared
+      // system/tools cohort key (`_claudeSessionPromptCacheKey` false/absent) never bypasses the
+      // gate, and an explicit provider opt-in continues to win for any caller.
+      const claudeSessionAffinity = parsed._claudeSessionPromptCacheKey === true
+        && typeof parsed.options.promptCacheKey === "string"
+        && parsed.options.promptCacheKey.length > 0;
+      if ((provider.promptCacheKey && parsed.options.promptCacheKey !== undefined) || claudeSessionAffinity) {
         body.prompt_cache_key = parsed.options.promptCacheKey;
       }
+      // Mirror the same stable key as a uuid-shaped `session_id` header (dual channel, same as
+      // the native ChatGPT route). The header is synthesized by the claude replay layer; a
+      // caller-supplied `session_id` wins.
+      const sessionId = incoming?.headers?.get("session_id");
+      if (sessionId) headers["session_id"] = sessionId;
       // Structured-output support varies by the physical upstream model even when one
       // gateway exposes a uniform OpenAI-compatible endpoint. Keep the #1137 translation
       // as the default, but let an exact model opt out instead of forcing a provider-wide

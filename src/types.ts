@@ -93,6 +93,15 @@ export interface OcxParsedRequest {
    * provider-private continuation caches again on every later turn.
    */
   _contextCompactionBoundary?: boolean;
+  /**
+   * True when this is a Claude (Anthropic Messages) replay whose `options.promptCacheKey` is a
+   * stable per-session key derived from `metadata.user_id` (not the shared system/tools cohort
+   * hash). The openai-chat adapter forwards the key to the upstream `/chat/completions` body AND
+   * mirrors it as a `session_id` header even when the provider has not opted into
+   * `promptCacheKey`, restoring the session-affinity prompt-cache continuity that strict-opt-in
+   * gatekeeping otherwise strips on the CC translate-and-replay path. Never serialized to the wire.
+   */
+  _claudeSessionPromptCacheKey?: boolean;
 }
 
 export interface OcxContext {

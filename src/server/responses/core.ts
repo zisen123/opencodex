@@ -1648,6 +1648,16 @@ async function handleResponsesInner(
       parsed._clientThreadId = inboundClientThreadId;
       parsed._reasoningReplayScope = { clientThreadId: inboundClientThreadId };
     }
+    // CC translate-and-replay: mark a per-session (metadata.user_id-derived) cache key so the
+    // openai-chat adapter may forward it as a session-affinity hint without the provider-wide
+    // promptCacheKey opt-in. The shared system/tools cohort key (`promptCacheKeyIsSharedCohort`)
+    // must NOT bypass the gate — it identifies a content cohort, not a session.
+    if (inboundWire === "anthropic"
+      && options.promptCacheKeyIsSharedCohort !== true
+      && typeof parsed.options.promptCacheKey === "string"
+      && parsed.options.promptCacheKey.length > 0) {
+      parsed._claudeSessionPromptCacheKey = true;
+    }
   } catch (err) {
     if (isTranslatorBudgetExceededError(err)) {
       return formatErrorResponse(413, "request_too_large", "request translation buffer exceeded the safe limit", {
