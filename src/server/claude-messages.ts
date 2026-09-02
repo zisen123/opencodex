@@ -379,7 +379,19 @@ async function anthropicNativePassthrough(
   target: PassthroughTarget,
 ): Promise<Response> {
   const model = typeof body.model === "string" ? body.model : "unknown";
-  logCtx.model = model;
+  // Billing/usage matching keys on (provider, model) with the UPSTREAM model id.
+  // The caller's model here is the CC alias (claude-ocx-<provider>--<model>[1m]);
+  // logging it verbatim makes estimateRequestCost miss the price table for every
+  // passthrough turn (the alias string is not a price key). Provider passthrough
+  // resolves the real upstream id in target.modelId — log that; native keeps the
+  // caller's id (it IS the upstream id on that branch). requestedModel keeps the
+  // alias for traceability.
+  if (target.kind === "provider") {
+    logCtx.model = target.modelId;
+    logCtx.resolvedModel = target.modelId;
+  } else {
+    logCtx.model = model;
+  }
   logCtx.provider = target.kind === "provider" ? target.providerName : "anthropic-native";
   logCtx.requestedModel = model;
   let logged = false;
