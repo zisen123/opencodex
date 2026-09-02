@@ -102,6 +102,11 @@ const DISPLAY_NAME_OVERRIDES: ReadonlyMap<string, string> = new Map([
   ["sophnet-anthropic/anthropic.claude-opus-4-6", "Claude Opus 4.6"],
   ["sophnet-anthropic/claude-sonnet-4-6", "Claude Sonnet 4.6"],
   ["sophnet-anthropic/claude-haiku-4-5-20251001", "Claude Haiku 4.5"],
+  ["sophnet-anthropic/GLM-5.3", "GLM 5.3"],
+  ["sophnet-anthropic/qwen3.8-max", "Qwen3.8 Max"],
+  ["sophnet-anthropic/Kimi-K3", "Kimi K3"],
+  ["sophnet-anthropic/DeepSeek-V4-Pro-0813", "DeepSeek V4 Pro"],
+  ["sophnet-anthropic/gpt-5.4", "GPT-5.4"],
   ["openrouter/stealth/ox-alpha", "Ox Alpha"],
   ["openrouter-responses/stealth/ox-alpha", "Ox Alpha"],
 ]);
