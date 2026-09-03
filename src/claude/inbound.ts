@@ -95,22 +95,27 @@ export function isClaudeCodeAttributionText(text: string): boolean {
   return text.trimStart().startsWith(CLAUDE_CODE_ATTRIBUTION_PREFIX);
 }
 
-function systemToInstructions(system: unknown): string | undefined {
+/**
+ * Non-empty system text blocks (attribution already stripped): each block becomes
+ * one input_text part of the leading developer message, exactly like CPA's
+ * appendSystemText loop (empty and attribution blocks skipped).
+ */
+function systemToParts(system: unknown): string[] {
   if (typeof system === "string") {
-    if (isClaudeCodeAttributionText(system)) return undefined;
-    return system.length > 0 ? system : undefined;
+    if (isClaudeCodeAttributionText(system) || system.length === 0) return [];
+    return [system];
   }
   if (Array.isArray(system)) {
     const parts: string[] = [];
     for (const block of system) {
       if (isRec(block) && block.type === "text" && typeof block.text === "string") {
         if (isClaudeCodeAttributionText(block.text)) continue; // strip CC attribution block
-        parts.push(block.text);
+        if (block.text.length > 0) parts.push(block.text);
       }
     }
-    return parts.length > 0 ? parts.join("\n\n") : undefined;
+    return parts;
   }
-  return undefined;
+  return [];
 }
 
 function imageBlockToInputImage(block: Rec): Rec | null {
@@ -463,21 +468,40 @@ export function anthropicToResponsesTranslation(raw: unknown, cc?: OcxClaudeCode
   }
 
   const input: Rec[] = [];
-  const systemParts: string[] = [];
-  const topLevelSystem = systemToInstructions(raw.system);
-  if (topLevelSystem !== undefined) systemParts.push(topLevelSystem);
+  const systemParts: string[] = systemToParts(raw.system);
+  // system role entries inside `messages` (real Claude Code sends them despite the
+  // published API) fold into the SAME developer message — pre-scan so it can sit at
+  // input[0] like CPA's template (which appends the developer message before any
+  // conversation item).
+  for (const msg of raw.messages) {
+    if (isRec(msg) && msg.role === "system") {
+      const text = systemMessageText(msg.content);
+      if (text.length > 0) systemParts.push(text);
+    }
+  }
   const blockedNames = effectiveBlockedSkillNames(cc);
   const elide: SkillElisionContext = {
     callIds: blockedSkillCallIds(raw.messages, blockedNames),
     names: blockedNames,
   };
+  // System rides as a leading developer message in `input`, NOT top-level
+  // `instructions` (CLIProxyAPI codex_claude_request.go parity: the template keeps
+  // instructions empty and puts each non-empty system block as an input_text part of
+  // one developer message at input[0] — the shape native Codex clients send, so the
+  // upstream prefix structure matches what its cache expects).
+  if (systemParts.length > 0) {
+    input.push({
+      type: "message",
+      role: "developer",
+      content: systemParts.map(text => ({ type: "input_text", text })),
+    });
+  }
   for (const msg of raw.messages) {
     if (!isRec(msg)) throw new AnthropicRequestError("each message must be an object");
     if (msg.role === "user") userMessageToItems(msg.content, input, elide);
     else if (msg.role === "assistant") assistantMessageToItems(msg.content, input);
     else if (msg.role === "system") {
-      const text = systemMessageText(msg.content);
-      if (text.length > 0) systemParts.push(text);
+      // already folded into the developer message above
     }
     else throw new AnthropicRequestError(`unsupported message role: ${String(msg.role)}`);
   }
@@ -489,7 +513,8 @@ export function anthropicToResponsesTranslation(raw: unknown, cc?: OcxClaudeCode
     stream: raw.stream === true,
   };
 
-  if (systemParts.length > 0) body.instructions = systemParts.join("\n\n");
+  // systemParts already rides input[0] as a developer message above; top-level
+  // `instructions` is intentionally never emitted (CPA parity).
 
   const tools = toolsToResponses(raw.tools);
   if (tools) body.tools = tools;

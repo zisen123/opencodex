@@ -57,7 +57,9 @@ describe("claude inbound translation", () => {
   test("content/tool/option mapping round-trips", () => {
     const body = anthropicToResponsesBody(claudeCodeRequest()) as Record<string, any>;
     expect(body.model).toBe("gemini/gemini-3-pro");
-    expect(body.instructions).toBe("You are Claude Code.\n\nPrefer terse answers.");
+    // System rides input[0] as a developer message (one input_text part per block),
+    // NOT top-level instructions — CLIProxyAPI codex translator parity.
+    expect(body.instructions).toBeUndefined();
     expect(body.max_output_tokens).toBe(8192);
     expect(body.temperature).toBe(0.7);
     expect(body.top_p).toBe(0.9);
@@ -81,12 +83,18 @@ describe("claude inbound translation", () => {
     expect(tools[1]).toEqual({ type: "web_search" });
 
     const input = body.input as Record<string, any>[];
-    // user text, assistant text (thinking dropped), function_call, function_call_output, user tail
-    expect(input.map(i => i.type ?? i.role)).toEqual(["message", "message", "function_call", "function_call_output", "message"]);
-    expect(input[1].content).toEqual([{ type: "output_text", text: "Reading it now." }]);
-    expect(input[2]).toMatchObject({ call_id: "toolu_01", name: "Read", arguments: JSON.stringify({ file_path: "/README.md" }) });
-    expect(input[3]).toMatchObject({ call_id: "toolu_01", output: [{ type: "input_text", text: "# hello" }] });
-    const tail = input[4].content as Record<string, any>[];
+    // developer system, user text, assistant text (thinking dropped), function_call, function_call_output, user tail
+    expect(input.map(i => i.type ?? i.role)).toEqual(["message", "message", "message", "function_call", "function_call_output", "message"]);
+    expect(input[0].role).toBe("developer");
+    expect(input[0].content).toEqual([
+      { type: "input_text", text: "You are Claude Code." },
+      { type: "input_text", text: "Prefer terse answers." },
+    ]);
+    expect(input[1].content).toEqual([{ type: "input_text", text: "read the README" }]);
+    expect(input[2].content).toEqual([{ type: "output_text", text: "Reading it now." }]);
+    expect(input[3]).toMatchObject({ call_id: "toolu_01", name: "Read", arguments: JSON.stringify({ file_path: "/README.md" }) });
+    expect(input[4]).toMatchObject({ call_id: "toolu_01", output: [{ type: "input_text", text: "# hello" }] });
+    const tail = input[5].content as Record<string, any>[];
     expect(tail[0]).toEqual({ type: "input_text", text: "now summarize" });
     expect(tail[1]).toEqual({ type: "input_image", image_url: "data:image/png;base64,aWc=" });
   });
@@ -211,7 +219,7 @@ describe("claude inbound translation", () => {
     expect(() => parseRequest(body)).not.toThrow();
   });
 
-  test("system role messages fold into instructions (real Claude Code sends them; native backend rejects system items)", () => {
+  test("system role messages fold into the leading developer message (real Claude Code sends them; native backend rejects system items)", () => {
     const body = anthropicToResponsesBody({
       model: "m", max_tokens: 10,
       system: "top-level",
@@ -221,11 +229,21 @@ describe("claude inbound translation", () => {
         { role: "user", content: "hi" },
       ],
     }) as any;
-    expect(body.instructions).toBe("top-level\n\nbe terse\n\nblock form");
+    expect(body.instructions).toBeUndefined();
+    // All system sources merge into ONE developer message at input[0], one part each.
+    expect(body.input[0]).toEqual({
+      type: "message",
+      role: "developer",
+      content: [
+        { type: "input_text", text: "top-level" },
+        { type: "input_text", text: "be terse" },
+        { type: "input_text", text: "block form" },
+      ],
+    });
     // No system message items in input — native ChatGPT backend 400s on them.
     expect((body.input as any[]).every(item => item.role !== "system")).toBe(true);
-    expect(body.input).toHaveLength(1);
-    expect(body.input[0].role).toBe("user");
+    expect(body.input).toHaveLength(2);
+    expect(body.input[1].role).toBe("user");
     expect(() => responsesRequestSchema.parse(body)).not.toThrow();
     expect(() => parseRequest(body)).not.toThrow();
   });
