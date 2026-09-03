@@ -96,21 +96,46 @@ export function isClaudeCodeAttributionText(text: string): boolean {
 }
 
 /**
+ * Claude Code appends an accumulating run of `<total_tokens>N tokens left</total_tokens>`
+ * tags to the system tail: each turn inserts one more tag with the *current* context
+ * budget (15000000 → 14980677 → …), so every request diverges from the previous one
+ * at the exact insertion point (~13.6k chars in, wire-diff verified 2026-09-03,
+ * /tmp/cc-diff-experiment). That single mid-system mutation truncates the upstream
+ * prefix cache to ~17% of the body every turn. Stripping the run keeps the system
+ * byte-stable across turns; the budget info is advisory, not needed for the answer.
+ */
+const TOTAL_TOKENS_TAG_RE = /(?:<total_tokens>[^<]*<\/total_tokens>\s*)+/g;
+
+/** Remove every `<total_tokens>…</total_tokens>` run from a system text block. */
+export function stripTotalTokensTags(text: string): string {
+  if (!text.includes("<total_tokens>")) return text;
+  return text.replace(TOTAL_TOKENS_TAG_RE, "");
+}
+
+/** True when the block is nothing but tags/whitespace after stripping. */
+function isBlankAfterStrip(text: string): boolean {
+  return stripTotalTokensTags(text).trim().length === 0;
+}
+
+/**
  * Non-empty system text blocks (attribution already stripped): each block becomes
  * one input_text part of the leading developer message, exactly like CPA's
  * appendSystemText loop (empty and attribution blocks skipped).
  */
 function systemToParts(system: unknown): string[] {
   if (typeof system === "string") {
-    if (isClaudeCodeAttributionText(system) || system.length === 0) return [];
-    return [system];
+    if (isClaudeCodeAttributionText(system)) return [];
+    const stripped = stripTotalTokensTags(system);
+    if (stripped.length === 0 || stripped.trim().length === 0) return [];
+    return [stripped];
   }
   if (Array.isArray(system)) {
     const parts: string[] = [];
     for (const block of system) {
       if (isRec(block) && block.type === "text" && typeof block.text === "string") {
         if (isClaudeCodeAttributionText(block.text)) continue; // strip CC attribution block
-        if (block.text.length > 0) parts.push(block.text);
+        if (isBlankAfterStrip(block.text)) continue; // only budget tags → nothing to keep
+        parts.push(stripTotalTokensTags(block.text));
       }
     }
     return parts;
@@ -288,13 +313,17 @@ function blockedSkillCallIds(messages: readonly unknown[], blocked: readonly str
  * `instructions` is the only shape that works on every route.
  */
 function systemMessageText(content: unknown): string {
-  if (typeof content === "string") return isClaudeCodeAttributionText(content) ? "" : content;
+  if (typeof content === "string") {
+    if (isClaudeCodeAttributionText(content)) return "";
+    return stripTotalTokensTags(content);
+  }
   if (!Array.isArray(content)) return "";
   const parts: string[] = [];
   for (const raw of content) {
     if (isRec(raw) && raw.type === "text" && typeof raw.text === "string") {
       if (isClaudeCodeAttributionText(raw.text)) continue; // strip CC attribution block
-      parts.push(raw.text);
+      if (isBlankAfterStrip(raw.text)) continue; // only budget tags → nothing to keep
+      parts.push(stripTotalTokensTags(raw.text));
     }
   }
   return parts.join("\n\n");

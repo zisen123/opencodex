@@ -248,6 +248,50 @@ describe("claude inbound translation", () => {
     expect(() => parseRequest(body)).not.toThrow();
   });
 
+  test("accumulating <total_tokens> budget tags are stripped from every system source (mid-system insertion poisons upstream prefix caching)", () => {
+    const body = anthropicToResponsesBody({
+      model: "m", max_tokens: 10,
+      system: [
+        { type: "text", text: "You are Claude Code." },
+        { type: "text", text: "Preamble\n<total_tokens>15000000 tokens left</total_tokens><total_tokens>14980677 tokens left</total_tokens>\n\nTool contract." },
+      ],
+      messages: [
+        { role: "system", content: "be terse <total_tokens>14973161 tokens left</total_tokens>" },
+        { role: "user", content: "hi" },
+      ],
+    }) as any;
+    expect(body.input[0].content).toEqual([
+      { type: "input_text", text: "You are Claude Code." },
+      { type: "input_text", text: "Preamble\nTool contract." },
+      { type: "input_text", text: "be terse " },
+    ]);
+    expect(JSON.stringify(body)).not.toContain("total_tokens");
+    expect(() => responsesRequestSchema.parse(body)).not.toThrow();
+    expect(() => parseRequest(body)).not.toThrow();
+  });
+
+  test("a system block that is nothing but budget tags is dropped entirely", () => {
+    const body = anthropicToResponsesBody({
+      model: "m", max_tokens: 10,
+      system: [
+        { type: "text", text: "real prompt" },
+        { type: "text", text: "<total_tokens>15000000 tokens left</total_tokens>\n" },
+      ],
+      messages: [{ role: "user", content: "hi" }],
+    }) as any;
+    expect(body.input[0].content).toEqual([{ type: "input_text", text: "real prompt" }]);
+    expect(JSON.stringify(body)).not.toContain("total_tokens");
+  });
+
+  test("string-form system also has budget tags stripped", () => {
+    const body = anthropicToResponsesBody({
+      model: "m", max_tokens: 10,
+      system: "keep this <total_tokens>123 tokens left</total_tokens> and this",
+      messages: [{ role: "user", content: "hi" }],
+    }) as any;
+    expect(body.input[0].content).toEqual([{ type: "input_text", text: "keep this and this" }]);
+  });
+
   test("tool_result is_error and string content", () => {
     const body = anthropicToResponsesBody({
       model: "m", max_tokens: 10,
