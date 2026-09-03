@@ -81,12 +81,32 @@ function formatFromOutputConfig(outputConfig: unknown): Rec | undefined {
   return { type: "json_schema", name: "response", schema: format.schema };
 }
 
+/**
+ * Claude Code prefixes the dynamic attribution block (per-request billing /
+ * prompt-fingerprint data, e.g. `cc_version=2.1.207.552; cc_entrypoint=cli;`) to
+ * the system list as its own text block. Its content is unstable across client
+ * versions, so forwarding it verbatim would poison upstream prefix caching
+ * (instructions token 1 changes every upgrade). Ported from CLIProxyAPI
+ * IsClaudeCodeAttributionSystemText: trim leading whitespace, then prefix-match.
+ */
+const CLAUDE_CODE_ATTRIBUTION_PREFIX = "x-anthropic-billing-header:";
+
+export function isClaudeCodeAttributionText(text: string): boolean {
+  return text.trimStart().startsWith(CLAUDE_CODE_ATTRIBUTION_PREFIX);
+}
+
 function systemToInstructions(system: unknown): string | undefined {
-  if (typeof system === "string") return system.length > 0 ? system : undefined;
+  if (typeof system === "string") {
+    if (isClaudeCodeAttributionText(system)) return undefined;
+    return system.length > 0 ? system : undefined;
+  }
   if (Array.isArray(system)) {
     const parts: string[] = [];
     for (const block of system) {
-      if (isRec(block) && block.type === "text" && typeof block.text === "string") parts.push(block.text);
+      if (isRec(block) && block.type === "text" && typeof block.text === "string") {
+        if (isClaudeCodeAttributionText(block.text)) continue; // strip CC attribution block
+        parts.push(block.text);
+      }
     }
     return parts.length > 0 ? parts.join("\n\n") : undefined;
   }
@@ -263,11 +283,14 @@ function blockedSkillCallIds(messages: readonly unknown[], blocked: readonly str
  * `instructions` is the only shape that works on every route.
  */
 function systemMessageText(content: unknown): string {
-  if (typeof content === "string") return content;
+  if (typeof content === "string") return isClaudeCodeAttributionText(content) ? "" : content;
   if (!Array.isArray(content)) return "";
   const parts: string[] = [];
   for (const raw of content) {
-    if (isRec(raw) && raw.type === "text" && typeof raw.text === "string") parts.push(raw.text);
+    if (isRec(raw) && raw.type === "text" && typeof raw.text === "string") {
+      if (isClaudeCodeAttributionText(raw.text)) continue; // strip CC attribution block
+      parts.push(raw.text);
+    }
   }
   return parts.join("\n\n");
 }
