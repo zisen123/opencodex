@@ -14,6 +14,7 @@ import { fetchWithResetRetry, prepareSameTarget429Wait } from "../lib/upstream-r
 import { rateLimitRetryDelayMs } from "../providers/key-failover";
 import {
   isTranslatorBudgetExceededError,
+  type TranslatorBudget,
   TRANSLATOR_MAX_TURN_BYTES,
   TranslatorBudgetExceededError,
 } from "../lib/translator-budget";
@@ -384,8 +385,12 @@ export async function runWithWebSearch(deps: WebSearchLoopDeps): Promise<Respons
     const iterMessages: OcxMessage[] = forceAnswer && executedSearchCount > 0
       ? [...messages, forcedAnswerNudge()]
       : messages;
+    // Inherit the route-normalized stream bit: a modelUpstreamNonStream target runs the
+    // sidecar on a bounded JSON upstream too (its usage accounting is why the policy exists).
+    // consumeIterationEvents below dispatches on the response content-type, so the
+    // stream-shaped scanner still works on the JSON answer.
     const iterParsed: OcxParsedRequest = {
-      ...parsed, stream: true,
+      ...parsed, stream: parsed.stream,
       context: { ...parsed.context, messages: iterMessages, tools: forceAnswer ? toolsNoWebSearch : allTools },
     };
     // One cumulative header deadline spans every pool-key 429 rotation in this model iteration.
@@ -572,12 +577,36 @@ export async function runWithWebSearch(deps: WebSearchLoopDeps): Promise<Respons
     let liveWindowOpen = deps.streamRoutedModelOutput === true;
     let streamedPassthroughCount = 0;
     try {
-      const parse = prepared.responseAdapter.parseStream.bind(prepared.responseAdapter);
-      for await (const event of parseStreamWithProgress(prepared.response, parse, {
-        signal,
-        inactivityTimeoutMs: routedModelStallTimeoutMs,
-        translatorBudget,
-      })) {
+      // modelUpstreamNonStream parity: a JSON (non-SSE) upstream answer is parsed through the
+      // adapter's buffered parseResponse and replayed through the same event loop below, so the
+      // scanner and tool dispatch see an identical shape.
+      const upstreamContentType = (prepared.response.headers.get("content-type") ?? "").toLowerCase();
+      const isJson = upstreamContentType.includes("application/json");
+      const parse: (response: Response, budget: TranslatorBudget) => AsyncGenerator<AdapterEvent> = isJson
+        && prepared.responseAdapter.parseResponse
+        ? (_response: Response, budget: TranslatorBudget) => (async function* () {
+            for (const event of await prepared.responseAdapter.parseResponse!(
+              new Response(prepared.response.body, { headers: prepared.response.headers }),
+              budget,
+            )) yield event;
+          })()
+        : prepared.responseAdapter.parseStream.bind(prepared.responseAdapter);
+      for await (const event of parseStreamWithProgress(
+        isJson
+          ? new Response(new ReadableStream({
+              async start(controller) {
+                controller.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
+                controller.close();
+              },
+            }), { headers: { "content-type": "text/event-stream" } })
+          : prepared.response,
+        parse,
+        {
+          signal,
+          inactivityTimeoutMs: routedModelStallTimeoutMs,
+          translatorBudget,
+        },
+      )) {
         if (event.type === "heartbeat") yield event;
         // Kiro's explicit-completion protocol marks ordinary assistant text as commentary while
         // it performs a bounded final-answer retry. That text is safe to surface immediately and

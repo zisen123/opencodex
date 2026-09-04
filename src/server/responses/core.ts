@@ -4234,6 +4234,37 @@ async function handleResponsesInner(
         responseStateOptions(activeAdapter.name === "kiro"),
       );
     }
+    // modelUpstreamNonStream parity with the #875 passthrough reframe: the policy
+    // forced a bounded JSON upstream for a client that asked for SSE (this routed
+    // branch ran with parsed.stream=false). responsesJsonToSseStream's done-only
+    // frame sequence is NOT sufficient for downstream translators — the Claude
+    // Messages translator needs output_item.added plus function_call_arguments
+    // delta/done frames to materialize tool_use blocks (verified live: done-only
+    // collapsed every tool turn into empty content). Route the buffered events
+    // through the SAME bridgeToResponsesSSE the streaming branch uses, so the
+    // synthesized frame sequence is byte-identical to a native streamed turn.
+    if (clientRequestedStream === true) {
+      const { toolNsMap, declaredToolNames, toolParameterSchemas, freeformToolNames, toolSearchToolNames } = toolBridgeMaps;
+      const sseStream = bridgeToResponsesSSE(
+        (async function* () { for (const event of events) yield event; })(),
+        parsed._responseModelId ?? parsed.modelId,
+        toolNsMap,
+        freeformToolNames,
+        toolSearchToolNames,
+        undefined,
+        2_000,
+        {
+          translatorBudget,
+          hideThinkingSummary: parsed.options.hideThinkingSummary,
+          declaredToolNames,
+          toolParameterSchemas,
+          ...(options.onFirstOutput ? { onFirstOutput: options.onFirstOutput } : {}),
+        },
+      );
+      return new Response(sseStream, {
+        headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no" },
+      });
+    }
     return new Response(JSON.stringify(json), { headers: { "Content-Type": "application/json" } });
   }
 
