@@ -26,6 +26,7 @@ import { NoEligiblePolicyCandidateError, routeModel } from "../router";
 import { evidenceFromBody } from "../routing/request-evidence";
 import { resolveWireProtocolOverride } from "./adapter-resolve";
 import type { OcxConfig } from "../types";
+import { modelInList } from "../types";
 import { readJsonRequestBody } from "./request-decompress";
 import {
   addFinalRequestLog,
@@ -175,6 +176,14 @@ async function handleChatCompletionsWithBudget(
   // Routed adapters only support streamed turns; always stream internally and fold
   // for non-streaming clients. Native Chat uses the caller's original stream bit.
   internalBody.stream = true;
+  // modelUpstreamNonStream parity with the Responses route: a listed model gets a
+  // bounded JSON upstream on this Chat→Responses fallback path too; the JSON
+  // answer is synthesized back into SSE for streaming clients further below.
+  if (settledRoute?.provider.adapter === "openai-chat"
+    && modelInList(settledRoute.provider.modelUpstreamNonStream, settledRoute.modelId)) {
+    internalBody.stream = false;
+    delete internalBody.stream_options;
+  }
   if (settledRoute?.provider.adapter === "openai-responses") {
     // ChatGPT backend rejects store:true and unsupported sampling knobs.
     internalBody.store = false;

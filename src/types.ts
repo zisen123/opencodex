@@ -1536,6 +1536,16 @@ export interface OcxProviderConfig {
    * reasoning_effort for these even when Codex selects a reasoning level (e.g. xAI grok-build-0.1).
    */
   noReasoningModels?: string[];
+  /**
+   * Model ids whose Chat Completions upstream must be asked for a bounded JSON response
+   * (stream:false) even when the client asked for SSE. Some OpenAI-compatible gateways
+   * stop reporting `usage.prompt_tokens_details.cached_tokens` in streaming mode while
+   * the non-streaming response still carries it (sophnet gpt-5.5, observed 2026-09-02);
+   * forcing the bounded JSON upstream restores accurate usage/cache accounting. The
+   * response is reframed as SSE for streaming clients, so agent tool loops are
+   * unaffected — they wait for the terminal frame either way.
+   */
+  modelUpstreamNonStream?: string[];
   /** Model ids that reject caller-specified temperature. */
   noTemperatureModels?: string[];
   /** Model ids that reject caller-specified top_p. */

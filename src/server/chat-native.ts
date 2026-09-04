@@ -28,6 +28,7 @@ import {
 } from "../providers/key-failover";
 import type { RouteResult } from "../router";
 import type { OcxConfig, OcxProviderConfig } from "../types";
+import { modelInList } from "../types";
 import { fetchWithHeaderTimeout, providerFetch, safeHostLabel } from "./responses/fetch-helpers";
 import { linkAbortSignal } from "./responses";
 import {
@@ -88,6 +89,11 @@ interface HandleNativeChatOptions {
 
 export async function handleNativeChatCompletions(options: HandleNativeChatOptions): Promise<Response> {
   const { req, config, logCtx, logIds, route, requestedModel, requestedStream, translatorBudget } = options;
+  // modelUpstreamNonStream (see types.ts): gateways whose streaming usage drops
+  // prompt_tokens_details.cached_tokens get a bounded JSON upstream here too; the
+  // JSON branch below reframes it as SSE via jsonCompletionSse for streaming clients.
+  const forceNonStream = modelInList(route.provider.modelUpstreamNonStream, route.modelId);
+  const upstreamStream = forceNonStream ? false : requestedStream;
   logCtx.inboundProtocol = "chat";
   const attempt = beginRequestAttempt(
     (logCtx.attempts?.length ?? 0) + 1,
@@ -138,7 +144,7 @@ export async function handleNativeChatCompletions(options: HandleNativeChatOptio
     retainedRequestBytes = bytes;
   };
   try {
-    activeRequest = buildOpenAIChatPassthroughRequest(activeProvider, options.chatBody, route.modelId, requestedStream);
+    activeRequest = buildOpenAIChatPassthroughRequest(activeProvider, options.chatBody, route.modelId, upstreamStream);
     retainRequest(activeRequest);
   } catch (error) {
     releaseRetainedRequest();
@@ -205,7 +211,7 @@ export async function handleNativeChatCompletions(options: HandleNativeChatOptio
       activeProvider = rotated;
       activeAdapter = createOpenAIChatAdapter(activeProvider);
       releaseRetainedRequest();
-      activeRequest = buildOpenAIChatPassthroughRequest(activeProvider, options.chatBody, route.modelId, requestedStream);
+      activeRequest = buildOpenAIChatPassthroughRequest(activeProvider, options.chatBody, route.modelId, upstreamStream);
       retainRequest(activeRequest);
       response = await send(activeRequest, "key-429");
     }

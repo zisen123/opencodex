@@ -1080,6 +1080,22 @@ async function applyFinalRouteRequestNormalization(args: {
     }
   }
 
+  // Provider-config analogue of the registry-only policy above, for openai-chat
+  // upstreams the registry does not own (custom key presets like sophnet). A
+  // model listed in `modelUpstreamNonStream` gets a bounded JSON upstream even
+  // when the client asked for SSE; the JSON answer is reframed as SSE by the
+  // response-side synthesis paths (claude-messages/chat-completions defensive
+  // JSON branches). Used for gateways whose streaming usage drops
+  // prompt_tokens_details.cached_tokens (sophnet gpt-5.5 since 2026-09-02).
+  if (route.provider.adapter === "openai-chat"
+    && modelInList(route.provider.modelUpstreamNonStream, route.modelId)) {
+    parsed.stream = false;
+    if (parsed._rawBody && typeof parsed._rawBody === "object") {
+      (parsed._rawBody as Record<string, unknown>).stream = false;
+      delete (parsed._rawBody as Record<string, unknown>).stream_options;
+    }
+  }
+
   // Generic Responses clients (e.g. AI-SDK apps) omit `store`, but the canonical
   // forward Codex backend rejects a native request without an explicit store:false.
   // Default it only there — every other Responses upstream (key-auth providers and
