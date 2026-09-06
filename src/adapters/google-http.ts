@@ -25,9 +25,15 @@ async function normalizeFinalGoogleError(label: string, res: Response, signal?: 
  * Fetch a Google-family upstream (Vertex / Antigravity) with Kiro-style hardening: per-attempt
  * timeout (`AbortSignal.any([parent, timeout])`), bounded retry on transient status / network
  * errors, `Retry-After` honoring, jittered exponential backoff, and a classified + redacted final
- * error body. `label` is the provider-facing prefix used in error messages.
+ * error body. `label` is the provider-facing prefix used in error messages. `proxyUrl` routes the
+ * request through the provider's per-provider outbound proxy when configured.
  */
-export async function fetchGoogleWithRetry(label: string, request: AdapterRequest, ctx: AdapterFetchContext = {}): Promise<Response> {
+export async function fetchGoogleWithRetry(
+  label: string,
+  request: AdapterRequest,
+  ctx: AdapterFetchContext = {},
+  proxyUrl?: string,
+): Promise<Response> {
   const timeoutMs = ctx.timeoutMs ?? 200_000;
   let lastError: unknown;
   let activeRequest = request;
@@ -39,6 +45,7 @@ export async function fetchGoogleWithRetry(label: string, request: AdapterReques
         method: activeRequest.method,
         headers: activeRequest.headers,
         body: activeRequest.body,
+        ...(proxyUrl ? { proxy: proxyUrl } : {}),
       }, timeoutMs, ctx.abortSignal, ctx.stream);
       if (res.status === 400 && !compatibilityReplayUsed) {
         let payloadText = "";
@@ -90,11 +97,19 @@ export async function fetchGoogleWithRetry(label: string, request: AdapterReques
 }
 
 /** Vertex AI retry wrapper. */
-export function fetchVertexWithRetry(request: AdapterRequest, ctx: AdapterFetchContext = {}): Promise<Response> {
-  return fetchGoogleWithRetry("Vertex AI", request, ctx);
+export function fetchVertexWithRetry(
+  request: AdapterRequest,
+  ctx: AdapterFetchContext = {},
+  proxyUrl?: string,
+): Promise<Response> {
+  return fetchGoogleWithRetry("Vertex AI", request, ctx, proxyUrl);
 }
 
 /** Antigravity (Cloud Code Assist) retry wrapper. */
-export function fetchAntigravityWithRetry(request: AdapterRequest, ctx: AdapterFetchContext = {}): Promise<Response> {
-  return fetchGoogleWithRetry("Antigravity", request, ctx);
+export function fetchAntigravityWithRetry(
+  request: AdapterRequest,
+  ctx: AdapterFetchContext = {},
+  proxyUrl?: string,
+): Promise<Response> {
+  return fetchGoogleWithRetry("Antigravity", request, ctx, proxyUrl);
 }

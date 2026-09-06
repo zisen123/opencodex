@@ -158,6 +158,7 @@ async function fetchWithResetRecovery(
   url: string,
   ctx: AdapterFetchContext,
   timeoutMs: number,
+  proxyUrl?: string,
 ): Promise<Response> {
   let lastError: unknown;
   for (let attempt = 0; attempt < RESET_ATTEMPTS; attempt++) {
@@ -171,6 +172,7 @@ async function fetchWithResetRecovery(
         headers,
         body: request.body,
         ...(recovered ? { keepalive: false } : {}),
+        ...(proxyUrl ? { proxy: proxyUrl } : {}),
       }, timeoutMs, ctx.abortSignal, ctx.stream);
     } catch (error) {
       if (ctx.abortSignal?.aborted || !isConnectionResetError(error) || attempt === RESET_ATTEMPTS - 1) throw error;
@@ -244,14 +246,15 @@ async function fetchKiroAttempt(
   request: AdapterRequest,
   ctx: AdapterFetchContext,
   timeoutMs: number,
+  proxyUrl?: string,
 ): Promise<Response> {
   const legacy = legacyUrl(request.url);
   let response: Response;
   try {
-    response = await fetchWithResetRecovery(request, request.url, ctx, timeoutMs);
+    response = await fetchWithResetRecovery(request, request.url, ctx, timeoutMs, proxyUrl);
   } catch (error) {
     if (!legacy || !endpointConnectFailure(error)) throw error;
-    return fetchWithResetRecovery(request, legacy, ctx, timeoutMs);
+    return fetchWithResetRecovery(request, legacy, ctx, timeoutMs, proxyUrl);
   }
 
   if (legacy && !response.ok) {
@@ -259,7 +262,7 @@ async function fetchKiroAttempt(
     response = inspected.response;
     if (inspected.fallback) {
       cancelResponseBodyBestEffort(response);
-      response = await fetchWithResetRecovery(request, legacy, ctx, timeoutMs);
+      response = await fetchWithResetRecovery(request, legacy, ctx, timeoutMs, proxyUrl);
     }
   }
   return response;
@@ -270,7 +273,11 @@ async function fetchKiroAttempt(
  * throttle recovery. The shared probe starts only after a 429, so healthy parallel traffic remains
  * parallel while a throttled account cannot burn every caller's independent retry budget (#532).
  */
-export async function fetchKiroWithRetry(request: AdapterRequest, ctx: AdapterFetchContext = {}): Promise<Response> {
+export async function fetchKiroWithRetry(
+  request: AdapterRequest,
+  ctx: AdapterFetchContext = {},
+  proxyUrl?: string,
+): Promise<Response> {
   const timeoutMs = ctx.timeoutMs ?? 200_000;
   let probeToken: symbol | undefined;
   try {
@@ -278,7 +285,7 @@ export async function fetchKiroWithRetry(request: AdapterRequest, ctx: AdapterFe
       if (!probeToken) probeToken = await enterKiroThrottleGate(ctx.abortSignal);
       else await waitForKiroCooldown(ctx.abortSignal);
 
-      const response = await fetchKiroAttempt(request, ctx, timeoutMs);
+      const response = await fetchKiroAttempt(request, ctx, timeoutMs, proxyUrl);
       const throttle = await inspectKiroThrottle(response, ctx.abortSignal);
       if (!throttle || !throttle.transient) {
         releaseKiroThrottleProbe(probeToken);

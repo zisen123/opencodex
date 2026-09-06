@@ -312,6 +312,68 @@ describe("opencodex config defaults", () => {
     warnSpy.mockRestore();
   });
 
+  test("an invalid persisted provider proxy is ignored without wiping config or logging its value", () => {
+    const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+    writeConfig({
+      port: 12345,
+      defaultProvider: "custom",
+      providers: {
+        custom: {
+          adapter: "openai-chat",
+          baseUrl: "https://example.test/v1",
+          apiKey: "upstream-secret",
+          proxy: 12345,
+        },
+        other: {
+          adapter: "openai-chat",
+          baseUrl: "https://other.test/v1",
+          proxy: "   ",
+        },
+      },
+    });
+
+    const config = loadConfig();
+    const diagnostics = readConfigDiagnostics();
+
+    expect(config.providers.custom?.proxy).toBeUndefined();
+    expect(config.providers.other?.proxy).toBeUndefined();
+    expect(config).toMatchObject({
+      port: 12345,
+      defaultProvider: "custom",
+      providers: {
+        custom: { baseUrl: "https://example.test/v1", apiKey: "upstream-secret" },
+        other: { baseUrl: "https://other.test/v1" },
+      },
+    });
+    expect(diagnostics).toMatchObject({
+      source: "file",
+      error: null,
+      warnings: [
+        expect.stringContaining("providers.custom.proxy ignored"),
+        expect.stringContaining("providers.other.proxy ignored"),
+      ],
+    });
+    expect(backupNames()).toEqual([]);
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  test("a provider proxy URL and env reference round-trip through loadConfig", () => {
+    writeConfig({
+      port: 12345,
+      defaultProvider: "custom",
+      providers: {
+        custom: { adapter: "openai-chat", baseUrl: "https://example.test/v1", proxy: "http://127.0.0.1:7890" },
+        ref: { adapter: "openai-chat", baseUrl: "https://ref.test/v1", proxy: "${HTTPS_PROXY}" },
+      },
+    });
+
+    const config = loadConfig();
+
+    expect(config.providers.custom?.proxy).toBe("http://127.0.0.1:7890");
+    expect(config.providers.ref?.proxy).toBe("${HTTPS_PROXY}");
+  });
+
   test("a blank hostname already on disk degrades without wiping providers or keys", () => {
     // Regression: rejecting a blank hostname in the schema made loadConfig fail twice
     // (getDefaultConfig() has no hostname key, so the merge-defaults repair cannot fix

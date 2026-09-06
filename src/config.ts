@@ -734,6 +734,10 @@ const providerConfigSchema = z.object({
   modelSupportsServiceTier: z.record(z.string().min(1), z.boolean()).optional(),
   preserveResponsesReasoningContent: z.boolean().optional(),
   allowPrivateNetwork: z.boolean().optional(),
+  // Per-provider outbound proxy URL; env references ("${HTTPS_PROXY}") resolve at use time.
+  // Invalid hand edits degrade to undefined (warnDegradedProviderProxy surfaces it) so one bad
+  // value cannot reset unrelated providers through the backup-and-defaults repair path.
+  proxy: z.string().trim().min(1).optional().catch(undefined),
   noStructuredOutputModels: z.array(z.string().min(1))
     .transform(normalizeNonBlankStringArray)
     .optional(),
@@ -2085,6 +2089,34 @@ function warnDegradedCodexAccountPicker(rawParsed: unknown): void {
   if (warning) console.warn(`⚠️  config.json ${warning}. Other settings were preserved.`);
 }
 
+/**
+ * Per-provider `proxy` values that the schema degraded to undefined. The raw value is never
+ * echoed: a proxy URL may embed credentials, and a degraded-value warning must not leak them.
+ */
+function degradedProviderProxyWarnings(rawParsed: unknown): string[] {
+  const raw = rawConfigRecord(rawParsed);
+  const rawProviders = raw?.providers;
+  if (!rawProviders || typeof rawProviders !== "object" || Array.isArray(rawProviders)) return [];
+  const warnings: string[] = [];
+  for (const [name, entry] of Object.entries(rawProviders as Record<string, unknown>)) {
+    if (!entry || typeof entry !== "object") continue;
+    const rawProxy = (entry as Record<string, unknown>).proxy;
+    if (rawProxy === undefined) continue;
+    // Mirrors providerConfigSchema: any non-blank string survives (URL or "${ENV}" reference).
+    if (typeof rawProxy === "string" && rawProxy.trim().length > 0) continue;
+    warnings.push(
+      `providers.${name}.proxy ignored: expected a non-empty proxy URL or "\${ENV_VAR}" reference`,
+    );
+  }
+  return warnings;
+}
+
+function warnDegradedProviderProxy(rawParsed: unknown): void {
+  for (const warning of degradedProviderProxyWarnings(rawParsed)) {
+    console.warn(`⚠️  config.json ${warning}. Other settings were preserved.`);
+  }
+}
+
 function nativeSubagentSyncDisabledReason(config: OcxConfig, rawParsed?: unknown): string | null {
   if (config.syncCodexSubagentDefaults !== true) return null;
   const malformed = malformedNativeSubagentFields(rawParsed);
@@ -2147,6 +2179,7 @@ export function loadConfig(): OcxConfig {
       warnDegradedCodexAccountPicker(parsed);
       warnDegradedUpstreamHostCircuitThreshold(parsed);
       warnDegradedAgentTaskRecovery(parsed);
+      warnDegradedProviderProxy(parsed);
       return withRefreshedCostOverlays(normalizeClaudeSubagentEffort(normalizeNativeSubagentSync(config, parsed), parsed));
     }
     // Schema validation failed — merge defaults into the raw object instead of
@@ -2170,6 +2203,7 @@ export function loadConfig(): OcxConfig {
       warnDegradedCodexAccountPicker(parsed);
       warnDegradedUpstreamHostCircuitThreshold(parsed);
       warnDegradedAgentTaskRecovery(parsed);
+      warnDegradedProviderProxy(parsed);
       return withRefreshedCostOverlays(normalizeClaudeSubagentEffort(normalizeNativeSubagentSync(config, parsed), parsed));
     }
     // Merge couldn't fix it — truly broken config
@@ -2231,6 +2265,7 @@ function validFileConfigDiagnostics(config: OcxConfig, rawParsed: unknown): Conf
   if (hostCircuitWarning) warnings.push(hostCircuitWarning);
   const recoveryWarning = malformedAgentTaskRecoveryWarning(rawParsed);
   if (recoveryWarning) warnings.push(recoveryWarning);
+  warnings.push(...degradedProviderProxyWarnings(rawParsed));
   if (syncDisabledReason) {
     warnings.push(`syncCodexSubagentDefaults ignored: ${syncDisabledReason}`);
   }

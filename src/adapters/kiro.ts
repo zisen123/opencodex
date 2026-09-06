@@ -40,6 +40,7 @@ import type { AdapterFetchContext, AdapterRequest } from "./base";
 import { extractKiroImages, normalizeKiroImages, type KiroImage } from "./kiro-images";
 import { sniffImageDimensions } from "./anthropic-image-guard";
 import { fetchKiroWithRetry, noteKiroTransientThrottle } from "./kiro-retry";
+import { providerOutboundProxyUrl } from "../lib/provider-proxy";
 import { convertKiroToolContext } from "./kiro-tools";
 import { identifyRoutedModel } from "./identity";
 import { buildNonOpenAIToolCatalogNudgeFromNames } from "./tool-catalog-nudge";
@@ -1898,7 +1899,7 @@ export function createKiroAdapter(provider: OcxProviderConfig): ProviderAdapter 
       // Keep it for the adapter-owned bounded continuation so cancelling the client turn aborts
       // both the first Kiro request and its one allowed completion retry.
       if (ctx?.abortSignal) requestAbortSignal = ctx.abortSignal;
-      return fetchKiroWithRetry(request, ctx);
+      return fetchKiroWithRetry(request, ctx, providerOutboundProxyUrl(provider));
     },
 
     formatErrorBody(status: number, headers: Headers, payloadText: string): string {

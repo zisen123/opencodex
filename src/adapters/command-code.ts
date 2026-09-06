@@ -7,6 +7,7 @@ import { isAllowedToolChoice, namespacedToolName, resolveToolChoiceWireName, too
 import type { AdapterFetchContext, AdapterRequest, ProviderAdapter } from "./base";
 import type { TranslatorBudget } from "../lib/translator-budget";
 import { readBoundedResponseBody } from "../lib/bounded-body";
+import { providerOutboundProxyUrl } from "../lib/provider-proxy";
 import { configuredReasoningEfforts } from "../reasoning-effort";
 import { commandCodeReasoningEfforts, refreshCommandCodeReasoningEfforts } from "../providers/command-code-efforts";
 import { identifyRoutedModel } from "./identity";
@@ -447,7 +448,17 @@ function supportedCommandCodeEffort(provider: OcxProviderConfig, modelId: string
 }
 
 export function createCommandCodeAdapter(provider: OcxProviderConfig): ProviderAdapter {
-  const executor = (provider as OcxProviderConfig & { fetch?: typeof globalThis.fetch }).fetch ?? globalThis.fetch;
+  const baseExecutor = (provider as OcxProviderConfig & { fetch?: typeof globalThis.fetch }).fetch ?? globalThis.fetch;
+  // Per-provider outbound proxy: applied at the executor so the effort-profile refresh fetch
+  // rides the same route as the generate calls. Unset providers keep the raw executor.
+  const proxyUrl = providerOutboundProxyUrl(provider);
+  const executor = proxyUrl
+    ? Object.assign(
+      (input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) =>
+        baseExecutor(input, { ...init, proxy: proxyUrl }),
+      { preconnect: (...args: Parameters<typeof globalThis.fetch.preconnect>) => baseExecutor.preconnect?.(...args) },
+    )
+    : baseExecutor;
   return {
     name: "command-code",
     async buildRequest(parsed: OcxParsedRequest): Promise<AdapterRequest> {

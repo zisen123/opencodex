@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getConfigDir } from "../config";
 import { recordOwnedConfigPath } from "../lib/config-ownership";
+import { providerOutboundProxyInit } from "../lib/provider-proxy";
 import type { OcxProviderConfig, OcxParsedRequest } from "../types";
 import { createOpenAIChatAdapter } from "./openai-chat";
 import type { ProviderAdapter, AdapterRequest, IncomingMeta } from "./base";
@@ -214,6 +215,9 @@ export function createMimoFreeAdapter(provider: OcxProviderConfig): ProviderAdap
   const base = createOpenAIChatAdapter(provider);
   // Per-adapter session-affinity id (random, per process instance).
   const sessionId = `ses_${Math.random().toString(36).slice(2, 26)}`;
+  // Per-provider outbound proxy for the chat sends. The JWT bootstrap keeps the process-wide
+  // resolution: its cache is module-level and shared, so a per-provider route cannot own it.
+  const proxyInit = providerOutboundProxyInit(provider);
 
   return {
     ...base,
@@ -252,6 +256,7 @@ export function createMimoFreeAdapter(provider: OcxProviderConfig): ProviderAdap
         headers: request.headers as Record<string, string>,
         body: request.body,
         signal: ctx?.abortSignal,
+        ...proxyInit,
       });
 
       // Retry predicate: 401 (expired/invalid JWT) retries ONCE with a fresh token.
@@ -271,6 +276,7 @@ export function createMimoFreeAdapter(provider: OcxProviderConfig): ProviderAdap
           headers: retryHeaders,
           body: request.body,
           signal: ctx?.abortSignal,
+          ...proxyInit,
         });
       }
 

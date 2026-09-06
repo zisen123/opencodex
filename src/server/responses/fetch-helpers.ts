@@ -32,6 +32,7 @@ import {
 } from "../../combos";
 import { isInjectionDebugEnabled } from "../../lib/debug-settings";
 import { injectionDebugLog } from "../../lib/injection-debug-log";
+import { providerOutboundProxyUrl } from "../../lib/provider-proxy";
 import { modelInList, namespacedToolName } from "../../types";
 import type { AdapterEvent, OcxConfig, OcxParsedRequest, OcxProviderConfig, OcxProviderContinuationState, OcxUsage } from "../../types";
 import {
@@ -155,6 +156,10 @@ export function providerFetch(
   options: ProviderFetchOptions = {},
 ): ProviderFetch {
   const base = (provider as OcxProviderConfig & { fetch?: typeof globalThis.fetch }).fetch ?? globalThis.fetch;
+  // Per-provider outbound proxy (`providers.<name>.proxy`): resolved to Bun's per-request
+  // fetch `proxy` option, which overrides the HTTP(S)_PROXY env the global `proxy` field
+  // mirrors. Unset providers pass `init` through untouched, so global behavior is unchanged.
+  const proxyUrl = providerOutboundProxyUrl(provider);
   // ChatGPT Codex backend: streaming turns ride the responses_websockets
   // transport (measured ~3s faster TTFT than the SSE POST queue); everything
   // else keeps the provider's HTTP fetch. See ws-upstream.ts for the details.
@@ -162,7 +167,7 @@ export function providerFetch(
     if (typeof input === "string" && init && shouldUseCodexWsUpstream(input, init, runtime)) {
       return codexWsUpstreamFetch(input, init, base, runtime);
     }
-    return base(input, init);
+    return base(input, proxyUrl ? { ...init, proxy: proxyUrl } : init);
   };
   const waitForPacing = (signal?: AbortSignal) => options.providerName
     ? waitForProviderRequestSlot(options.providerName, provider, options.modelId, signal)

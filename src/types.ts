@@ -1394,6 +1394,14 @@ export interface OcxProviderConfig {
    * link-local, or unique-local upstreams. Metadata endpoints remain blocked.
    */
   allowPrivateNetwork?: boolean;
+  /**
+   * Outbound HTTP(S) proxy URL for THIS provider's upstream requests only (e.g.
+   * "http://127.0.0.1:7890", or "${HTTPS_PROXY}"-style env reference — same semantics as the
+   * global `proxy` field). Resolved to Bun's per-request fetch `proxy` option, so it overrides
+   * the global `proxy` / process env for this provider while every other provider keeps the
+   * existing process-wide resolution. See src/lib/provider-proxy.ts.
+   */
+  proxy?: string;
   /** Keep provider settings on disk but exclude it from routing and model/catalog listings. */
   disabled?: boolean;
   /**
