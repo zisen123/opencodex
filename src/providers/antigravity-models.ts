@@ -12,14 +12,14 @@ import { isValidModelDiscoveryModelId, MODEL_DISCOVERY_MAX_MODELS } from "./mode
 // ── Wire IDs (what CCA :fetchAvailableModels returns) ──
 
 /** Current Antigravity Flash generation. */
-const GEMINI_FLASH_CURRENT = "gemini-3.7-flash";
+const GEMINI_FLASH_CURRENT = "gemini-3.8-flash";
 
 /**
  * Wire ID that CCA actually accepts for the current Flash generation.
  * Google renamed the model to include a `-tiered` suffix; the picker-visible
- * ID stays `gemini-3.7-flash` (stripped by `pickerModelIdForDiscoveredWireId`).
+ * ID stays `gemini-3.8-flash` (stripped by `pickerModelIdForDiscoveredWireId`).
  */
-const GEMINI_FLASH_WIRE_ID = "gemini-3.7-flash-tiered";
+const GEMINI_FLASH_WIRE_ID = "gemini-3.8-flash-tiered";
 
 /**
  * Retired Flash ids → the reasoning tier they used to encode.
@@ -28,13 +28,19 @@ const GEMINI_FLASH_WIRE_ID = "gemini-3.7-flash-tiered";
  * one ships, so a saved selection cannot keep pointing at it. A flat alias would
  * strand the user's tier: `resolveAntigravityEffortWireModel` rule 1 treats any
  * alias as "the suffix IS the effort" and deliberately sends no thinkingConfig, so
- * `gemini-3.6-flash-high` would silently become an untiered 3.7 call. Carrying the
+ * `gemini-3.6-flash-high` would silently become an untiered 3.8 call. Carrying the
  * level here preserves what the user actually chose.
  *
- * 3.7 exposes tiers through `thinkingLevel` on ONE wire id rather than through
+ * 3.8 exposes tiers through `thinkingLevel` on ONE wire id rather than through
  * suffixed wire ids, which is why the mapping is id → level and not id → id.
  */
 const RETIRED_FLASH_TIERS: Record<string, string> = {
+  // 3.7 generation.
+  "gemini-3.7-flash": "medium", // bare base carried a medium default
+  "gemini-3.7-flash-low": "low",
+  "gemini-3.7-flash-medium": "medium",
+  "gemini-3.7-flash-high": "high",
+  "gemini-3.7-flash-tiered": "medium", // tiered wire id encoded no fixed tier; default medium
   // 3.6 generation.
   "gemini-3.6-flash": "medium", // bare base carried a medium default
   "gemini-3.6-flash-low": "low",
@@ -49,7 +55,7 @@ const RETIRED_FLASH_TIERS: Record<string, string> = {
 };
 
 const ANTIGRAVITY_WIRE_MODELS = [
-  "gemini-3.7-flash-tiered",
+  "gemini-3.8-flash-tiered",
   "gemini-3.1-pro-low",
   "gemini-pro-agent",
   "gemini-3.1-flash-image",
@@ -109,7 +115,7 @@ function pickerModelIdForDiscoveredWireId(
 // Gemini models: effort → wire model suffix (official agy UI pattern).
 // Claude Opus: effort → thinkingConfig.thinkingLevel (CLIProxyAPI proven pattern).
 export const ANTIGRAVITY_MODEL_EFFORTS: Record<string, string[]> = {
-  "gemini-3.7-flash": ["low", "medium", "high"],
+  "gemini-3.8-flash": ["low", "medium", "high"],
   "gemini-3.1-pro": ["low", "high"],
   "claude-sonnet-4-6": ["low", "medium", "high", "max"],
   "claude-opus-4-6-thinking": ["low", "medium", "high", "max"],
@@ -133,7 +139,7 @@ const ANTIGRAVITY_DEFAULT_EFFORT: Record<string, string> = {
  * instead of suffixed wire ids, with the level applied when the caller names none.
  */
 const ANTIGRAVITY_THINKING_LEVEL_MODELS: Record<string, string> = {
-  "gemini-3.7-flash": "medium",
+  "gemini-3.8-flash": "medium",
 };
 
 // `minimal` is deliberately absent: Google documents it as unsupported for the current
@@ -145,7 +151,7 @@ const ANTIGRAVITY_THINKING_LEVELS = new Set(["low", "medium", "high"]);
  * Models not listed here use themselves as the wire ID.
  */
 const ANTIGRAVITY_PICKER_TO_WIRE: Record<string, string> = {
-  "gemini-3.7-flash": GEMINI_FLASH_WIRE_ID,
+  "gemini-3.8-flash": GEMINI_FLASH_WIRE_ID,
 };
 
 /** Map a picker-visible base model to its CCA wire ID. Identity when no mapping exists. */
@@ -173,7 +179,7 @@ const ANTIGRAVITY_COMPATIBILITY_MODEL_ALIASES: Record<string, string> = {
   // ── Retired Flash generations ──
   // Google takes the previous Antigravity Flash model offline almost immediately
   // once its successor ships, so 3.6 (and the 3.5 ids that used to land on it)
-  // route to 3.7. These stay in the alias map — not only in the tier map below —
+  // route to 3.8. These stay in the alias map — not only in the tier map below —
   // because `parseAntigravityAvailableModels` uses THIS map to keep a stale CCA
   // payload from republishing a dead wire id as a picker row.
   ...Object.fromEntries(
@@ -202,7 +208,7 @@ function isKnownAntigravityPickerModelId(value: string): boolean {
 
 // Context windows from the upstream `:fetchAvailableModels` maxTokens per model.
 const ANTIGRAVITY_WIRE_MODEL_CONTEXT_WINDOWS: Record<string, number> = {
-  "gemini-3.7-flash-tiered": 1_048_576,
+  "gemini-3.8-flash-tiered": 1_048_576,
   "gemini-3.1-pro-low": 1_048_576,
   "gemini-pro-agent": 1_048_576,
   "gemini-3.1-flash-image": 1_048_576,
@@ -213,7 +219,7 @@ const ANTIGRAVITY_WIRE_MODEL_CONTEXT_WINDOWS: Record<string, number> = {
 
 export const ANTIGRAVITY_MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   // Collapsed base IDs — explicit entries for the picker.
-  "gemini-3.7-flash": 1_048_576,
+  "gemini-3.8-flash": 1_048_576,
   "gemini-3.1-pro": 1_048_576,
   // Wire IDs and aliases via derivation.
   ...ANTIGRAVITY_WIRE_MODEL_CONTEXT_WINDOWS,
@@ -226,11 +232,11 @@ export const ANTIGRAVITY_MODEL_CONTEXT_WINDOWS: Record<string, number> = {
 };
 
 export const ANTIGRAVITY_MODEL_INPUT_MODALITIES: Record<string, string[]> = {
-  // Google documents 3.7 Flash as also accepting video, audio and PDF, but this proxy
+  // Google documents 3.8 Flash as also accepting video, audio and PDF, but this proxy
   // carries only text and image parts (`OcxImageContent`, src/types.ts) and the Codex
   // catalog normalizes `input_modalities` against a closed enum. Advertising a modality
   // the wire cannot carry would be a promise we break at request time.
-  "gemini-3.7-flash": ["text", "image"],
+  "gemini-3.8-flash": ["text", "image"],
   "gemini-3.1-pro": ["text", "image"],
   "gemini-3.1-flash-image": ["text", "image"],
   "claude-sonnet-4-6": ["text", "image"],
@@ -446,7 +452,7 @@ const ANTIGRAVITY_USAGE_BASE_BY_ID: Record<string, string> = (() => {
     else if (rev[wire]) rev[alias] = rev[wire]!;
   }
   // Retired ids keep their OWN identity for usage aggregation, overriding the alias
-  // pass above. Routing sends new 3.6 calls to 3.7, but a usage row written months ago
+  // pass above. Routing sends new 3.7 calls to 3.8, but a usage row written months ago
   // records a model the user actually called: relabelling it would move historical spend
   // onto a model that did not exist then, and away from the 3.6 price row that still
   // prices it correctly. Retirement changes what we CALL, not what we RECORD.

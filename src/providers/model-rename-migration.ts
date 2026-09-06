@@ -63,19 +63,20 @@ export const MODEL_RENAMES: readonly ModelRename[] = [
     reason: "Alibaba shipped Qwen3.8-Max as stable and documents the preview endpoint as liable to be taken offline once preview concludes",
   },
   // Antigravity Flash generations. Google takes the previous Flash model off Cloud Code
-  // Assist almost immediately when the next ships, so a saved 3.6 (or older 3.5) id is a
+  // Assist almost immediately when the next ships, so a saved 3.7 (or older 3.6/3.5) id is a
   // dead selection rather than a merely outdated one. Routing already redirects these ids
   // at request time; this migration repairs the saved config so the picker, the allowlist
   // and the capability maps stop naming a model the backend no longer serves.
-  ...(["gemini-3.6-flash", "gemini-3.6-flash-low", "gemini-3.6-flash-medium", "gemini-3.6-flash-high",
+  ...(["gemini-3.7-flash", "gemini-3.7-flash-low", "gemini-3.7-flash-medium", "gemini-3.7-flash-high", "gemini-3.7-flash-tiered",
+    "gemini-3.6-flash", "gemini-3.6-flash-low", "gemini-3.6-flash-medium", "gemini-3.6-flash-high",
     "gemini-3.5-flash-extra-low", "gemini-3.5-flash-low", "gemini-3.5-flash-mid", "gemini-3.5-flash-high",
     "gemini-3-flash-agent"] as const).map(from => ({
     provider: "google-antigravity",
     from,
-    to: "gemini-3.7-flash",
+    to: "gemini-3.8-flash",
     reason: "Google retires the previous Antigravity Flash generation from Cloud Code Assist when its successor ships, so the saved id no longer resolves to a live model",
     // The retired Flash tiers were wire ids, so any saved per-model record keyed by one
-    // may also hold one as a value. 3.7 expresses tiers as thinkingLevel names instead.
+    // may also hold one as a value. 3.8 expresses tiers as thinkingLevel names instead.
     dropReasoningEffortMap: true,
   })),
 ];

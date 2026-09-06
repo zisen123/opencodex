@@ -417,7 +417,7 @@ describe("google provider hardening", () => {
     // Antigravity used to encode the tier in the wire id, so it sent no thinkingConfig.
     // Now that Google has retired the suffixed 3.6 ids, that tier has nowhere to live
     // except an explicit thinkingLevel on the current model.
-    expect(JSON.parse(antigravity.body).model).toBe("gemini-3.7-flash-tiered");
+    expect(JSON.parse(antigravity.body).model).toBe("gemini-3.8-flash-tiered");
     expect(JSON.parse(antigravity.body).request.generationConfig.thinkingConfig)
       .toEqual({ thinkingLevel: "high" });
   });

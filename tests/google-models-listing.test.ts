@@ -87,7 +87,7 @@ describe("Antigravity live model discovery", () => {
       return Response.json({
         models: {
           "gemini-3.1-pro-low": { maxTokens: 1_048_576, supportsImages: true, supportsThinking: true, thinkingBudget: 1000 },
-          "gemini-3.7-flash-tiered": { maxTokens: 1_048_576, supportsImages: true, supportsThinking: true, thinkingBudget: 10000 },
+          "gemini-3.8-flash-tiered": { maxTokens: 1_048_576, supportsImages: true, supportsThinking: true, thinkingBudget: 10000 },
           "future-flash-tiered": { maxTokens: 1_048_576, supportsImages: true, supportsThinking: true, thinkingBudget: 10000 },
           "future-flash-low": { maxTokens: 1_048_576, supportsImages: true, supportsThinking: true, thinkingBudget: 10000 },
           "future-flash-medium": { maxTokens: 1_048_576, supportsImages: true, supportsThinking: true, thinkingBudget: 10000 },
@@ -101,7 +101,7 @@ describe("Antigravity live model discovery", () => {
           "future-agent-model", "gemini-3.1-pro-low",
           "future-flash-low", "future-flash-medium", "future-flash-high",
         ] }] }],
-        tieredModelIds: { flash: ["gemini-3.7-flash-tiered", "future-flash-tiered"] },
+        tieredModelIds: { flash: ["gemini-3.8-flash-tiered", "future-flash-tiered"] },
         imageGenerationModelIds: ["gemini-3.1-flash-image"],
         tabModelIds: ["tab-only-model"],
         commandModelIds: ["non-agent-command-model"],
@@ -132,7 +132,7 @@ describe("Antigravity live model discovery", () => {
         "future-flash-tiered",
         "gemini-3.1-flash-image",
         "gemini-3.1-pro-low",
-        "gemini-3.7-flash",
+        "gemini-3.8-flash",
       ]);
       expect(live.find(model => model.id === "gemini-3.1-pro-low")).toMatchObject({
         contextWindow: 1_048_576,
@@ -149,7 +149,7 @@ describe("Antigravity live model discovery", () => {
 
       const catalog = buildCatalogEntries(null, [], live);
       const flashLow = catalog.find(entry => entry.slug === "google-antigravity/gemini-3.1-pro-low");
-      const flashHigh = catalog.find(entry => entry.slug === "google-antigravity/gemini-3.7-flash");
+      const flashHigh = catalog.find(entry => entry.slug === "google-antigravity/gemini-3.8-flash");
       const future = catalog.find(entry => entry.slug === "google-antigravity/future-agent-model");
       expect(flashLow).toMatchObject({
         context_window: 1_048_576,

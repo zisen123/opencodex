@@ -111,6 +111,13 @@ export const EXPECTED_PRICE_OVERLAYS: readonly ExpectedPriceOverlay[] = [
   // not published, so this is `verified-derived` rather than `verified`: the number is
   // proven, the claim that Antigravity charges it is inferred.
   { provider: "google-antigravity", modelId: "gemini-3.7-flash", cost4: GEMINI_37_FLASH, source: `derived: Gemini 3.7 Flash promotional rate through 2026-12-31 ${GEMINI_37_PRICING}`, verifiedAt: "2026-08-14", status: "verified-derived" },
+  // Retained after the 3.8 retirement: historical usage.jsonl rows still carry these
+  // ids, and dropping the row would silently zero the cost of requests already made.
+  // The 3.7 wire spellings bill at the 3.7 rate (same model, tiered/suffix spelling).
+  { provider: "google-antigravity", modelId: "gemini-3.7-flash-tiered", cost4: GEMINI_37_FLASH, source: `derived: tiered wire spelling of gemini-3.7-flash ${GEMINI_37_PRICING}`, verifiedAt: "2026-09-07", status: "verified-derived" },
+  { provider: "google-antigravity", modelId: "gemini-3.7-flash-low", cost4: GEMINI_37_FLASH, source: `derived: gemini-3.7-flash ${GEMINI_37_PRICING}`, verifiedAt: "2026-09-07", status: "verified-derived" },
+  { provider: "google-antigravity", modelId: "gemini-3.7-flash-medium", cost4: GEMINI_37_FLASH, source: `derived: gemini-3.7-flash ${GEMINI_37_PRICING}`, verifiedAt: "2026-09-07", status: "verified-derived" },
+  { provider: "google-antigravity", modelId: "gemini-3.7-flash-high", cost4: GEMINI_37_FLASH, source: `derived: gemini-3.7-flash ${GEMINI_37_PRICING}`, verifiedAt: "2026-09-07", status: "verified-derived" },
   // Retained after the 3.6 retirement: historical usage.jsonl rows still carry these
   // ids, and dropping the row would silently zero the cost of requests already made.
   { provider: "google-antigravity", modelId: "gemini-3.6-flash", cost4: GEMINI_36_FLASH, source: `collapsed base ID ${GEMINI_PRICING}`, verifiedAt: "2026-07-22", status: "verified" },
