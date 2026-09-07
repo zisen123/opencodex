@@ -612,3 +612,26 @@ export function stripImagesInPlace(parsed: OcxParsedRequest, translatorBudget?: 
   syncRawBodyImageDescriptions(parsed, descriptions);
   return stripped;
 }
+
+/**
+ * Wire-level counterpart of stripImagesInPlace for the native Chat Completions entry: it forwards
+ * raw chat wire messages (image_url parts) without the Responses translation, so there is no
+ * OcxParsedRequest to reuse. Handles both image_url forms (string and {url}) in any message
+ * content array, including tool results.
+ */
+export function stripChatWireImagesInPlace(rawBody: Record<string, unknown>): boolean {
+  const messages = rawBody.messages;
+  if (!Array.isArray(messages)) return false;
+  let stripped = false;
+  for (const message of messages) {
+    if (!isPlainRecord(message) || !Array.isArray(message.content)) continue;
+    const parts = message.content;
+    if (!parts.some(p => isPlainRecord(p) && p.type === "image_url")) continue;
+    message.content = parts.map(p => {
+      if (!isPlainRecord(p) || p.type !== "image_url") return p;
+      stripped = true;
+      return { type: "text", text: IMAGE_OMITTED_TEXT };
+    });
+  }
+  return stripped;
+}

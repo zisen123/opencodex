@@ -40,6 +40,7 @@ import {
   type RequestLogContext,
 } from "./request-log";
 import { jsonCompletionSse, nativeChatSse, structuredError, usageFromChat } from "./chat-native-sse";
+import { isModelTextOnly, stripChatWireImagesInPlace } from "../vision";
 
 type Rec = Record<string, unknown>;
 
@@ -125,6 +126,14 @@ export async function handleNativeChatCompletions(options: HandleNativeChatOptio
   logCtx.requestedServiceTier = typeof options.chatBody.service_tier === "string"
     ? options.chatBody.service_tier
     : undefined;
+
+  // Text-only models (provider.noVisionModels / inputModalities) reject image parts upstream.
+  // The Responses entry strips these in responses/core.ts; this native wire forwards
+  // chatBody.messages verbatim, so mutate it once here — covering every rebuild in the 429
+  // retry loops below — before the first passthrough request is built.
+  if (isModelTextOnly(route.provider, route.modelId)) {
+    stripChatWireImagesInPlace(options.chatBody);
+  }
 
   const upstream = new AbortController();
   const cleanupAbort = linkAbortSignal(upstream, req.signal);
