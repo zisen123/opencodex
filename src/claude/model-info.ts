@@ -97,6 +97,7 @@ const DISPLAY_NAME_OVERRIDES: ReadonlyMap<string, string> = new Map([
   ["sophnet/Kimi-K3", "Kimi K3"],
   ["sophnet/GLM-5.3", "GLM 5.3"],
   ["sophnet/glm-5.3-flash", "GLM 5.3 Flash"],
+  ["google-antigravity/gemini-3.8-flash", "Gemini 3.8 Flash"],
   ["sophnet-anthropic/claude-opus-4-8", "Claude Opus 4.8"],
   ["sophnet-anthropic/claude-opus-4-7", "Claude Opus 4.7"],
   ["sophnet-anthropic/anthropic.claude-opus-4-6", "Claude Opus 4.6"],
@@ -164,7 +165,8 @@ export function buildAnthropicModelInfos(
   // MANUAL_1M_ROWS entries follow the same only-the-[1m]-row shape.
   const oneMillionOnly = (provider: string, contextWindow: number | undefined, modelId: string): boolean =>
     ((provider === "sophnet" || provider === "sophnet-anthropic" || provider === "sophnet-responses"
-      || provider === "openrouter" || provider === "openrouter-responses")
+      || provider === "openrouter" || provider === "openrouter-responses"
+      || provider === "google-antigravity")
       && typeof contextWindow === "number" && contextWindow >= ONE_MILLION)
     || (typeof contextWindow === "number" && MANUAL_1M_ROWS.has(`${provider}/${modelId}`));
   // [1m] picker variant (devlog 260712 B1): Claude Code accounts exactly 1M for ids
