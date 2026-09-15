@@ -2015,6 +2015,106 @@ describe("OpenAI Responses forward-mode unsupported param stripping", () => {
   });
 });
 
+describe("stateful gateway replay compat (rewriteReplayCallIds / stripReplayItemStatus)", () => {
+  const gatewayProvider = {
+    adapter: "openai-responses",
+    baseUrl: "https://gateway.example/v1",
+    authMode: "key" as const,
+    apiKey: "sk-test",
+    rewriteReplayCallIds: ["ds-flash", "gpt-x"],
+    stripReplayItemStatus: ["gpt-x"],
+  };
+  const meta = { headers: new Headers({ authorization: "Bearer caller-token" }) };
+  const buildBody = (modelId: string, input: Record<string, unknown>[]) =>
+    JSON.parse(createResponsesPassthroughAdapter(gatewayProvider).buildRequest({
+      modelId,
+      context: { messages: [] },
+      stream: true,
+      options: {},
+      _rawBody: { model: modelId, input },
+    }, meta).body) as { input: Record<string, unknown>[] };
+
+  test("listed model rewrites every replay call_id to deterministic paired aliases", () => {
+    const input = [
+      { role: "user", content: [{ type: "input_text", text: "hi" }] },
+      { type: "function_call", call_id: "call_aaa", name: "ping", arguments: "{}" },
+      { type: "function_call_output", call_id: "call_aaa", output: "pong" },
+      { type: "custom_tool_call", call_id: "call_bbb", name: "apply_patch", input: "patch" },
+      { type: "custom_tool_call_output", call_id: "call_bbb", output: "done" },
+      { type: "local_shell_call", call_id: "call_ccc", action: { type: "exec", command: ["ls"] } },
+      { type: "function_call_output", call_id: "call_ccc", output: "files" },
+    ];
+
+    const first = buildBody("ds-flash", input).input;
+    const second = buildBody("ds-flash", input).input;
+
+    expect(first[1].call_id).toStartWith("call_ocx_");
+    expect((first[1].call_id as string).length).toBeLessThanOrEqual(64);
+    for (const [callIdx, outputIdx] of [[1, 2], [3, 4], [5, 6]] as const) {
+      expect(first[outputIdx].call_id).toBe(first[callIdx].call_id);
+    }
+    expect(first[1].call_id).not.toBe(first[3].call_id);
+    expect(first[3].call_id).not.toBe(first[5].call_id);
+    // deterministic across builds, so the upstream byte stream stays prefix-stable
+    expect(second.map(item => item.call_id)).toEqual(first.map(item => item.call_id));
+    // caller's input array is not mutated
+    expect(input[1].call_id).toBe("call_aaa");
+    expect(input[5].call_id).toBe("call_ccc");
+  });
+
+  test("unlisted model keeps replay call_ids intact", () => {
+    const input = [
+      { type: "function_call", call_id: "call_keep", name: "ping", arguments: "{}" },
+      { type: "function_call_output", call_id: "call_keep", output: "pong" },
+    ];
+    const body = buildBody("other-model", input).input;
+    expect(body[0].call_id).toBe("call_keep");
+    expect(body[1].call_id).toBe("call_keep");
+  });
+
+  test("rewrite applies on proxy-expanded replay (previous_response_id stripped)", () => {
+    const adapter = createResponsesPassthroughAdapter(gatewayProvider);
+    const body = JSON.parse(adapter.buildRequest({
+      modelId: "ds-flash",
+      previousResponseId: "resp_prev",
+      context: { messages: [] },
+      stream: true,
+      options: {},
+      _previousResponseInputExpanded: true,
+      _rawBody: {
+        model: "ds-flash",
+        previous_response_id: "resp_prev",
+        input: [
+          { type: "function_call", call_id: "call_prev_turn", name: "ping", arguments: "{}" },
+          { type: "function_call_output", call_id: "call_prev_turn", output: "pong" },
+        ],
+      },
+    }, meta).body) as { previous_response_id?: string; input: Record<string, unknown>[] };
+
+    expect(body.previous_response_id).toBeUndefined();
+    expect(body.input[0].call_id).toStartWith("call_ocx_");
+    expect(body.input[1].call_id).toBe(body.input[0].call_id);
+  });
+
+  test("stripReplayItemStatus drops status only for listed models", () => {
+    const input = [
+      { type: "reasoning", id: "rs_1", status: "completed", summary: [] },
+      { type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text: "hi" }] },
+      { role: "user", content: [{ type: "input_text", text: "next" }] },
+    ];
+
+    const stripped = buildBody("gpt-x", input).input;
+    expect(stripped[0]).not.toHaveProperty("status");
+    expect(stripped[1]).not.toHaveProperty("status");
+    expect(stripped[0].id).toBe("rs_1");
+
+    const kept = buildBody("ds-flash", input).input;
+    expect(kept[0].status).toBe("completed");
+    expect(kept[1].status).toBe("completed");
+    expect(input[0].status).toBe("completed");
+  });
+});
+
 describe("openaiResponsesUrl", () => {
   test("does not strip mid-path /v1 or a non-endpoint responses suffix", () => {
     expect(openaiResponsesUrl("https://proxy.example.com/v1/relay")).toBe(

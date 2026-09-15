@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { IncomingMeta, ProviderAdapter } from "./base";
-import { namespacedToolName, type AdapterEvent, type OcxParsedRequest, type OcxProviderConfig, type OcxUsage } from "../types";
+import { modelInList, namespacedToolName, type AdapterEvent, type OcxParsedRequest, type OcxProviderConfig, type OcxUsage } from "../types";
 import { catalogModelSupportsReasoningSummaries } from "../codex/catalog";
 import { COMPACT_PROMPT, decodeCompactionSummary, SUMMARY_PREFIX } from "../responses/compaction";
 import { collectResponsesToolGroups } from "../responses/tool-groups";
@@ -552,6 +552,55 @@ function repairOversizedReplayCallIds(body: unknown): unknown {
     return { ...item, call_id: alias };
   });
 
+  return changed ? { ...body, input } : body;
+}
+
+/**
+ * Rewrite every replayed input `call_id` to a deterministic alias the upstream has
+ * never issued. sophnet's Responses gateway is stateful: it reverse-looks-up
+ * replayed `call_id` values against its own stored responses and 400s when the
+ * stored response belongs to a different model ("previous_response_id model
+ * mismatch") or organization. An unknown alias finds no stored response, so the
+ * check never triggers. The alias is a plain sha256 of the original id —
+ * deterministic across turns, so the upstream byte stream stays prefix-stable and
+ * prompt-cache hits are preserved — and the alias map keeps call/output pairing
+ * consistent within the request.
+ */
+function rewriteReplayCallIdsDeterministic(body: unknown): unknown {
+  if (!isPlainObject(body) || !Array.isArray(body.input)) return body;
+  const aliases = new Map<string, string>();
+  let changed = false;
+  const input = body.input.map(item => {
+    if (!isPlainObject(item) || typeof item.call_id !== "string") return item;
+    let alias = aliases.get(item.call_id);
+    if (!alias) {
+      const digest = createHash("sha256").update(item.call_id).digest("hex");
+      alias = `${REPAIRED_CALL_ID_PREFIX}${digest.slice(0, REPAIRED_CALL_ID_DIGEST_LENGTH)}`;
+      aliases.set(item.call_id, alias);
+    }
+    changed = true;
+    return { ...item, call_id: alias };
+  });
+  return changed ? { ...body, input } : body;
+}
+
+/**
+ * Drop the `status` key from replayed input items. Replay expansion inherits
+ * `status` from the stored upstream response, and strict channels reject the key
+ * (sophnet gpt-5.3-codex: 400 unknown_parameter 'input[N].status'). Model-scoped
+ * because sibling models on the same gateway require the opposite (DeepSeek
+ * channels: 400 MissingParameter input.status when the key is absent).
+ */
+function stripReplayItemStatusFields(body: unknown): unknown {
+  if (!isPlainObject(body) || !Array.isArray(body.input)) return body;
+  let changed = false;
+  const input = body.input.map(item => {
+    if (!isPlainObject(item) || !Object.prototype.hasOwnProperty.call(item, "status")) return item;
+    changed = true;
+    const next: Record<string, unknown> = { ...item };
+    delete next.status;
+    return next;
+  });
   return changed ? { ...body, input } : body;
 }
 
@@ -1393,6 +1442,12 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       }
       if (forward || parsed._previousResponseInputExpanded === true) {
         outBody = repairOversizedReplayCallIds(outBody);
+      }
+      if (provider.authMode !== "forward" && modelInList(provider.rewriteReplayCallIds, parsed.modelId)) {
+        outBody = rewriteReplayCallIdsDeterministic(outBody);
+      }
+      if (modelInList(provider.stripReplayItemStatus, parsed.modelId)) {
+        outBody = stripReplayItemStatusFields(outBody);
       }
       outBody = stripUnsupportedReasoningSummaryDelivery(outBody, parsed.modelId);
       // Repair stored history from before the bridge emitted both keys: a conversation

@@ -1554,6 +1554,26 @@ export interface OcxProviderConfig {
    * unaffected — they wait for the terminal frame either way.
    */
   modelUpstreamNonStream?: string[];
+  /**
+   * Model ids whose Responses upstream is a stateful gateway that reverse-looks-up
+   * replayed tool `call_id` values against its own stored responses and rejects the
+   * request when the stored response was issued under a different model or
+   * organization (sophnet: 400 ILLEGAL_REQUEST_PARAMETERS "previous_response_id
+   * model mismatch" / "does not belong to current organization"). For these models
+   * every replayed input `call_id` is rewritten to a deterministic sha256-based
+   * alias the gateway has never issued, so the lookup finds nothing and the check
+   * never triggers. Determinism keeps the upstream byte stream stable across turns,
+   * preserving prompt-cache prefix hits.
+   */
+  rewriteReplayCallIds?: string[];
+  /**
+   * Model ids whose Responses upstream rejects the `status` key on replayed input
+   * items (sophnet gpt-5.3-codex: 400 unknown_parameter 'input[N].status'). Replay
+   * expansion inherits `status` from the stored upstream response. Model-scoped
+   * because sibling models on the same gateway can require the opposite (DeepSeek
+   * channels: 400 MissingParameter input.status when it is absent).
+   */
+  stripReplayItemStatus?: string[];
   /** Model ids that reject caller-specified temperature. */
   noTemperatureModels?: string[];
   /** Model ids that reject caller-specified top_p. */
