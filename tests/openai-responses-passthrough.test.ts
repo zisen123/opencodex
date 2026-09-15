@@ -2113,6 +2113,34 @@ describe("stateful gateway replay compat (rewriteReplayCallIds / stripReplayItem
     expect(kept[1].status).toBe("completed");
     expect(input[0].status).toBe("completed");
   });
+
+  test("stripReplayContentLogprobs drops content-part logprobs only for listed models", () => {
+    const input = [
+      { type: "message", role: "assistant", status: "completed", content: [
+        { type: "output_text", text: "hi", logprobs: [], annotations: [] },
+      ] },
+      { role: "user", content: [{ type: "input_text", text: "next" }] },
+    ];
+
+    const gwLogprobs = { ...gatewayProvider, stripReplayContentLogprobs: ["kimi"] };
+    const build = (modelId: string) =>
+      JSON.parse(createResponsesPassthroughAdapter(gwLogprobs).buildRequest({
+        modelId,
+        context: { messages: [] },
+        stream: true,
+        options: {},
+        _rawBody: { model: modelId, input },
+      }, meta).body) as { input: Array<{ content: Array<Record<string, unknown>> }> };
+
+    const stripped = build("kimi").input;
+    expect(stripped[0].content[0]).not.toHaveProperty("logprobs");
+    expect(stripped[0].content[0].annotations).toEqual([]);
+    expect(stripped[0].content[0].text).toBe("hi");
+
+    const kept = build("ds-flash").input;
+    expect(kept[0].content[0].logprobs).toEqual([]);
+    expect(input[0].content[0].logprobs).toEqual([]);
+  });
 });
 
 describe("openaiResponsesUrl", () => {

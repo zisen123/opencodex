@@ -1574,6 +1574,14 @@ export interface OcxProviderConfig {
    * channels: 400 MissingParameter input.status when it is absent).
    */
   stripReplayItemStatus?: string[];
+  /**
+   * Model ids whose Responses upstream rejects `logprobs` on replayed message
+   * content parts (sophnet Kimi-K3: 400 InvalidParameter "unknown field
+   * \"logprobs\""). GPT-channel outputs carry logprobs on their output_text
+   * parts, and both proxy replay expansion and agent clients echo those items
+   * verbatim into later turns — including after a mid-session model switch.
+   */
+  stripReplayContentLogprobs?: string[];
   /** Model ids that reject caller-specified temperature. */
   noTemperatureModels?: string[];
   /** Model ids that reject caller-specified top_p. */

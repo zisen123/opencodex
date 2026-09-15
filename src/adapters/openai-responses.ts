@@ -604,6 +604,32 @@ function stripReplayItemStatusFields(body: unknown): unknown {
   return changed ? { ...body, input } : body;
 }
 
+/**
+ * Drop `logprobs` from replayed message content parts. GPT-channel outputs attach
+ * logprobs to output_text parts, and replay expansion plus agent clients echo
+ * those items into later requests; strict channels reject the field (sophnet
+ * Kimi-K3: 400 InvalidParameter "unknown field \"logprobs\"").
+ */
+function stripReplayContentLogprobsFields(body: unknown): unknown {
+  if (!isPlainObject(body) || !Array.isArray(body.input)) return body;
+  let changed = false;
+  const input = body.input.map(item => {
+    if (!isPlainObject(item) || !Array.isArray(item.content)) return item;
+    let itemChanged = false;
+    const content = item.content.map(part => {
+      if (!isPlainObject(part) || !Object.prototype.hasOwnProperty.call(part, "logprobs")) return part;
+      itemChanged = true;
+      const nextPart: Record<string, unknown> = { ...part };
+      delete nextPart.logprobs;
+      return nextPart;
+    });
+    if (!itemChanged) return item;
+    changed = true;
+    return { ...item, content };
+  });
+  return changed ? { ...body, input } : body;
+}
+
 /** Flatten a Responses tool-output `output` value (string or content-part array) to plain text. */
 function toolOutputText(output: unknown): string {
   if (typeof output === "string") return output;
@@ -1448,6 +1474,9 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       }
       if (modelInList(provider.stripReplayItemStatus, parsed.modelId)) {
         outBody = stripReplayItemStatusFields(outBody);
+      }
+      if (provider.authMode !== "forward" && modelInList(provider.stripReplayContentLogprobs, parsed.modelId)) {
+        outBody = stripReplayContentLogprobsFields(outBody);
       }
       outBody = stripUnsupportedReasoningSummaryDelivery(outBody, parsed.modelId);
       // Repair stored history from before the bridge emitted both keys: a conversation
