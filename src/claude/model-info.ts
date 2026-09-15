@@ -87,14 +87,14 @@ export interface AnthropicModelInfo {
  * the Claude Code picker when every routed row would carry the same suffix.
  */
 const DISPLAY_NAME_OVERRIDES: ReadonlyMap<string, string> = new Map([
-  ["sophnet/gpt-5.5", "GPT-5.5"],
+  ["sophnet-responses/gpt-5.5", "GPT-5.5"],
   ["sophnet/gpt-5.4", "GPT-5.4"],
   ["sophnet-responses/gpt-5.3-codex", "GPT-5.3 Codex"],
   ["sophnet/DeepSeek-V4-Pro-0813", "DeepSeek V4 Pro"],
   ["sophnet-responses/DeepSeek-V4-Flash-Vision-Exp", "DeepSeek V4 Flash Vision"],
   ["sophnet/qwen3.8-max-0902", "Qwen3.8 Max"],
   ["sophnet/qwen3.8-flash", "Qwen3.8 Flash"],
-  ["sophnet/Kimi-K3", "Kimi K3"],
+  ["sophnet-responses/Kimi-K3", "Kimi K3"],
   ["sophnet/GLM-5.3", "GLM 5.3"],
   ["sophnet/glm-5.3-flash", "GLM 5.3 Flash"],
   ["google-antigravity/gemini-3.8-flash", "Gemini 3.8 Flash"],
@@ -150,7 +150,7 @@ export function buildAnthropicModelInfos(
   // Operator opt-in (2026-08-27): models whose AUTHORITATIVE window is < 1M but the
   // operator explicitly wants the [1m] picker row anyway, accepting that Claude Code
   // will then account 1M and the HUMAN compacts manually before the real limit
-  // (gpt-5.3-codex 400K / gpt-5.4 320K upstream). Rationale: the alternative for
+  // (gpt-5.3-codex 252K / gpt-5.4 922K measured upstream). Rationale: the alternative for
   // unrecognized ids is CC's conservative 200K window enforcement (startup warning
   // + premature compaction), which halves the usable window. Every id listed here
   // must have a real window >= 320K so the over-fill risk is bounded.
