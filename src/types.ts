@@ -933,6 +933,12 @@ export interface OcxConfig {
   webSearchSidecar?: OcxWebSearchSidecarConfig;
   /** Vision sidecar: describe images via a gpt vision model so text-only models can "see" them. */
   visionSidecar?: OcxVisionSidecarConfig;
+  /**
+   * Plain-speech rewrite: for whitelisted models only, rewrite the final assistant
+   * prose of a turn through a cheap model so it explains jargon and reads simply.
+   * Off unless configured; only the listed models are affected.
+   */
+  plainSpeech?: OcxPlainSpeechConfig;
   /** /v1/images relay for codex's built-in image_gen tool. */
   images?: OcxImagesConfig;
   /** /v1/alpha/search relay for codex's built-in web search client. */
@@ -1212,6 +1218,31 @@ export interface OcxVisionSidecarConfig {
   maxDescriptionsPerTurn?: number;
   /** Sidecar fetch timeout (ms). */
   timeoutMs?: number;
+}
+
+export interface OcxPlainSpeechConfig {
+  /** Master switch. Default: disabled. When false or unset, no model is ever rewritten. */
+  enabled?: boolean;
+  /**
+   * Model ids (public alias or upstream id) whose final assistant prose is rewritten.
+   * Only a turn whose requested model matches an entry here is affected; every other
+   * model is passed through byte-for-byte. Empty/unset means no model is rewritten.
+   */
+  models?: string[];
+  /**
+   * Model id used to perform the rewrite (routed through this proxy like any client
+   * request, so it must be a registered model). Should be a cheap/fast model.
+   */
+  rewriterModel?: string;
+  /** Optional override for the rewrite system instruction. Unset uses the built-in prompt. */
+  prompt?: string;
+  /** Rewrite request timeout (ms). Default 60_000. On timeout the original prose is returned unchanged. */
+  timeoutMs?: number;
+  /**
+   * Reasoning effort for the rewriter model. Default "low" keeps the rewrite cheap.
+   * Ignored by models without a reasoning parameter.
+   */
+  reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 }
 
 export interface OcxWebSearchSidecarConfig {

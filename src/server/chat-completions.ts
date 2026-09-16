@@ -27,6 +27,7 @@ import { evidenceFromBody } from "../routing/request-evidence";
 import { resolveWireProtocolOverride } from "./adapter-resolve";
 import type { OcxConfig } from "../types";
 import { modelInList } from "../types";
+import { applyPlainSpeechToChatCompletion, plainSpeechAppliesTo } from "./plain-speech";
 import { readJsonRequestBody } from "./request-decompress";
 import {
   addFinalRequestLog,
@@ -46,6 +47,7 @@ import {
   type TranslatorBudget,
 } from "../lib/translator-budget";
 import { handleNativeChatCompletions, isNativeChatRouteEligible } from "./chat-native";
+import { jsonCompletionSse } from "./chat-native-sse";
 
 type Rec = Record<string, unknown>;
 
@@ -105,6 +107,10 @@ async function handleChatCompletionsWithBudget(
 
   const requestedModel = chatBody.model as string;
   const stream = chatBody.stream === true;
+  // Plain-speech rewrite (opt-in, whitelist-only) also covers this Chat→Responses fallback
+  // path, so a whitelisted model that ever falls back here (web_search/combo/policy/etc.)
+  // still has its final prose rewritten. gpt-5.4 normally takes the native path above.
+  const plainSpeechFallback = plainSpeechAppliesTo(config, requestedModel);
   // Best-effort Grok attribution: the managed fence stamps this header on every model
   // it registers (extra_headers, sent verbatim by upstream Grok). Dashboard usage
   // bucketing only — never an auth or billing signal.
@@ -179,8 +185,9 @@ async function handleChatCompletionsWithBudget(
   // modelUpstreamNonStream parity with the Responses route: a listed model gets a
   // bounded JSON upstream on this Chat→Responses fallback path too; the JSON
   // answer is synthesized back into SSE for streaming clients further below.
-  if (settledRoute?.provider.adapter === "openai-chat"
-    && modelInList(settledRoute.provider.modelUpstreamNonStream, settledRoute.modelId)) {
+  if ((settledRoute?.provider.adapter === "openai-chat"
+    && modelInList(settledRoute.provider.modelUpstreamNonStream, settledRoute.modelId))
+    || plainSpeechFallback) {
     internalBody.stream = false;
     delete internalBody.stream_options;
   }
@@ -347,7 +354,9 @@ async function handleChatCompletionsWithBudget(
   const contentType = response.headers.get("content-type") ?? "";
   if (contentType.includes("text/event-stream") && response.body) {
     const chatSse = responsesSseToChatCompletionsSse(response.body, requestedModel, { translatorBudget });
-    if (stream) {
+    // Plain-speech must see the whole answer, so a streaming client is served by collecting,
+    // rewriting, then synthesizing SSE below — not the raw live stream.
+    if (stream && !plainSpeechFallback) {
       // Stream failures surface as an error SSE frame then abort the body — never a
       // success completion that embeds `[error] ...` + clean [DONE].
       return new Response(chatSse, {
@@ -361,6 +370,17 @@ async function handleChatCompletionsWithBudget(
     }
     try {
       const completion = await collectChatCompletion(chatSse, requestedModel, translatorBudget);
+      if (plainSpeechFallback) await applyPlainSpeechToChatCompletion(config, completion, req.signal);
+      if (stream) {
+        return new Response(jsonCompletionSse(completion, requestedModel), {
+          status: 200,
+          headers: {
+            "Content-Type": "text/event-stream; charset=utf-8",
+            "Cache-Control": "no-cache",
+            Connection: "keep-alive",
+          },
+        });
+      }
       return new Response(JSON.stringify(completion), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -410,6 +430,7 @@ async function handleChatCompletionsWithBudget(
     );
   }
   const completion = responsesJsonToChatCompletion(json, requestedModel);
+  if (plainSpeechFallback) await applyPlainSpeechToChatCompletion(config, completion, req.signal);
   if (!stream) {
     return new Response(JSON.stringify(completion), {
       status: 200,

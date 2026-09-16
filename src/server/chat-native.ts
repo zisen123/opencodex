@@ -41,6 +41,7 @@ import {
 } from "./request-log";
 import { jsonCompletionSse, nativeChatSse, structuredError, usageFromChat } from "./chat-native-sse";
 import { isModelTextOnly, stripChatWireImagesInPlace } from "../vision";
+import { applyPlainSpeechToChatCompletion, plainSpeechAppliesTo } from "./plain-speech";
 
 type Rec = Record<string, unknown>;
 
@@ -94,7 +95,11 @@ export async function handleNativeChatCompletions(options: HandleNativeChatOptio
   // prompt_tokens_details.cached_tokens get a bounded JSON upstream here too; the
   // JSON branch below reframes it as SSE via jsonCompletionSse for streaming clients.
   const forceNonStream = modelInList(route.provider.modelUpstreamNonStream, route.modelId);
-  const upstreamStream = forceNonStream ? false : requestedStream;
+  // Plain-speech rewrite (opt-in, whitelist-only): when active, this model's final prose is
+  // collected and rewritten before returning, so the upstream must be consumed non-streaming
+  // even for a streaming client (the rewritten answer is replayed as SSE below).
+  const plainSpeech = plainSpeechAppliesTo(config, requestedModel);
+  const upstreamStream = (forceNonStream || plainSpeech) ? false : requestedStream;
   logCtx.inboundProtocol = "chat";
   const attempt = beginRequestAttempt(
     (logCtx.attempts?.length ?? 0) + 1,
@@ -300,7 +305,9 @@ export async function handleNativeChatCompletions(options: HandleNativeChatOptio
         logCtx.usage = usage;
         attempt.usage = usage;
       },
-      ...(requestedStream ? {
+      // Plain-speech collects this stream itself and owns logging (like the non-stream
+      // path), so the live-stream terminal/cancel callbacks must not also fire.
+      ...(requestedStream && !plainSpeech ? {
         onTerminal: (status: number, message?: string) => {
           cleanupAbort();
           finishLog(status, message, "terminal");
@@ -312,7 +319,10 @@ export async function handleNativeChatCompletions(options: HandleNativeChatOptio
         },
       } : {}),
     });
-    if (requestedStream) {
+    // Plain-speech needs the whole answer before returning, so a streaming client is
+    // served by collecting the SSE, rewriting, then replaying as SSE. Without plain-speech
+    // a streaming client is passed the live stream unchanged.
+    if (requestedStream && !plainSpeech) {
       return new Response(stream, {
         status: 200,
         headers: {
@@ -325,7 +335,14 @@ export async function handleNativeChatCompletions(options: HandleNativeChatOptio
     try {
       const completion = await collectChatCompletion(stream, requestedModel, translatorBudget);
       cleanupAbort();
+      if (plainSpeech) await applyPlainSpeechToChatCompletion(config, completion, req.signal);
       finishLog(200);
+      if (requestedStream) {
+        return new Response(jsonCompletionSse(completion, requestedModel), {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache" },
+        });
+      }
       return Response.json(completion);
     } catch (error) {
       cleanupAbort();
@@ -371,6 +388,7 @@ export async function handleNativeChatCompletions(options: HandleNativeChatOptio
     logCtx.usage = usage;
     attempt.usage = usage;
   }
+  if (plainSpeech) await applyPlainSpeechToChatCompletion(config, completion, req.signal);
   if (logIds) recordFirstOutput(logCtx, logIds.start);
   finishLog(200);
   if (requestedStream) {
