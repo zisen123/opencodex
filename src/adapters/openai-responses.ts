@@ -605,6 +605,26 @@ function stripReplayItemStatusFields(body: unknown): unknown {
 }
 
 /**
+ * Add `status: "completed"` to replayed assistant message items that lack it. The
+ * Chat→Responses translation and replay expansion both emit assistant messages
+ * without the key, and strict channels reject that (sophnet Kimi-K3: 400
+ * MissingParameter `input.status`). Only assistant messages are touched: the same
+ * channel accepts user messages and tool items without `status` (probed 2026-09-17).
+ * The mirror image of stripReplayItemStatusFields above.
+ */
+function backfillReplayItemStatusFields(body: unknown): unknown {
+  if (!isPlainObject(body) || !Array.isArray(body.input)) return body;
+  let changed = false;
+  const input = body.input.map(item => {
+    if (!isPlainObject(item) || item.type !== "message" || item.role !== "assistant") return item;
+    if (typeof item.status === "string") return item;
+    changed = true;
+    return { ...item, status: "completed" };
+  });
+  return changed ? { ...body, input } : body;
+}
+
+/**
  * Drop `logprobs` from replayed message content parts. GPT-channel outputs attach
  * logprobs to output_text parts, and replay expansion plus agent clients echo
  * those items into later requests; strict channels reject the field (sophnet
@@ -1474,6 +1494,9 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       }
       if (modelInList(provider.stripReplayItemStatus, parsed.modelId)) {
         outBody = stripReplayItemStatusFields(outBody);
+      }
+      if (modelInList(provider.backfillReplayItemStatus, parsed.modelId)) {
+        outBody = backfillReplayItemStatusFields(outBody);
       }
       if (provider.authMode !== "forward" && modelInList(provider.stripReplayContentLogprobs, parsed.modelId)) {
         outBody = stripReplayContentLogprobsFields(outBody);

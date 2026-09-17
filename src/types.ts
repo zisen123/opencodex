@@ -1606,6 +1606,14 @@ export interface OcxProviderConfig {
    */
   stripReplayItemStatus?: string[];
   /**
+   * Model ids whose Responses upstream requires `status` on replayed assistant
+   * message items (sophnet Kimi-K3: 400 MissingParameter "input.status"). Both the
+   * Chat→Responses translation and replay expansion emit assistant messages without
+   * the key. Model-scoped because sibling models on the same gateway either tolerate
+   * its absence (DeepSeek) or reject its presence (see stripReplayItemStatus).
+   */
+  backfillReplayItemStatus?: string[];
+  /**
    * Model ids whose Responses upstream rejects `logprobs` on replayed message
    * content parts (sophnet Kimi-K3: 400 InvalidParameter "unknown field
    * \"logprobs\""). GPT-channel outputs carry logprobs on their output_text

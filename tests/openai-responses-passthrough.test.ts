@@ -2015,7 +2015,7 @@ describe("OpenAI Responses forward-mode unsupported param stripping", () => {
   });
 });
 
-describe("stateful gateway replay compat (rewriteReplayCallIds / stripReplayItemStatus)", () => {
+describe("stateful gateway replay compat (rewriteReplayCallIds / stripReplayItemStatus / backfillReplayItemStatus)", () => {
   const gatewayProvider = {
     adapter: "openai-responses",
     baseUrl: "https://gateway.example/v1",
@@ -2023,6 +2023,7 @@ describe("stateful gateway replay compat (rewriteReplayCallIds / stripReplayItem
     apiKey: "sk-test",
     rewriteReplayCallIds: ["ds-flash", "gpt-x"],
     stripReplayItemStatus: ["gpt-x"],
+    backfillReplayItemStatus: ["kimi"],
   };
   const meta = { headers: new Headers({ authorization: "Bearer caller-token" }) };
   const buildBody = (modelId: string, input: Record<string, unknown>[]) =>
@@ -2112,6 +2113,26 @@ describe("stateful gateway replay compat (rewriteReplayCallIds / stripReplayItem
     expect(kept[0].status).toBe("completed");
     expect(kept[1].status).toBe("completed");
     expect(input[0].status).toBe("completed");
+  });
+
+  test("backfillReplayItemStatus adds completed status to assistant messages only for listed models", () => {
+    const input = [
+      { type: "message", role: "assistant", content: [{ type: "output_text", text: "hi" }] },
+      { role: "user", content: [{ type: "input_text", text: "next" }] },
+      { type: "function_call", call_id: "call_aaa", name: "ping", arguments: "{}" },
+      { type: "message", role: "assistant", status: "in_progress", content: [{ type: "output_text", text: "partial" }] },
+    ];
+
+    const filled = buildBody("kimi", input).input;
+    expect(filled[0].status).toBe("completed");
+    expect(filled[1]).not.toHaveProperty("status");
+    expect(filled[2]).not.toHaveProperty("status");
+    expect(filled[3].status).toBe("in_progress");
+    // caller's input array is not mutated
+    expect(input[0]).not.toHaveProperty("status");
+
+    const untouched = buildBody("ds-flash", input).input;
+    expect(untouched[0]).not.toHaveProperty("status");
   });
 
   test("stripReplayContentLogprobs drops content-part logprobs only for listed models", () => {
